@@ -32,8 +32,12 @@ from shapely import wkb
 PW = b"reply-Dy7bge"
 VDC_DEFAULT = 16000
 META_RE = re.compile(rb'"(\w+):([^"]*)"')
+STR_RE = re.compile(rb'[\x20-\x7e]{2,}')
 # cgm graphical primitives we treat as geometry (class 4)
 POLYLINE, DISJOINT, POLYGON, POLYGONSET = 1, 2, 7, 8
+# webcgm application-structure delimiters (class 0)
+APS_BEGIN, APS_BODY, APS_END = 21, 22, 23
+END_PIC, END_META = 5, 2
 
 
 def deob(d):
@@ -162,7 +166,14 @@ def parse_tile(name):
 
 
 def _parse_tile(name):
-    """worker: read+decode one .mvf, return (square, [rows])."""
+    """worker: read+decode one .mvf, return (square, [rows]).
+
+    the picture body is a tree of webcgm application structures (APS): a
+    `layer` APS (LayerName = pressure tier / annotation class) wrapping
+    `grobject` APS (one per asset, carrying Name = os feature id and
+    ScreenTip = pipe spec). every polyline inherits the LayerName of the
+    enclosing layer APS and the Name/ScreenTip of the enclosing grobject.
+    """
     d = _ZIP.read(name)
     db = deob(d)
     meta = {k.decode("latin1"): v.decode("latin1") for k, v in META_RE.findall(db)}
@@ -177,15 +188,32 @@ def _parse_tile(name):
         return None, []
     facet = meta.get("Facet", os.path.splitext(os.path.basename(name))[0])
     square = name.split("/")[3] if name.count("/") >= 3 else facet[:2]
-    layer = layer_name(db)
-    date = meta.get("Date")
-    src = meta.get("Source")
-    rows, obj, fclass = [], None, None
+    date, src = meta.get("Date"), meta.get("Source")
+    rows, stack = [], []  # stack of [type, layer, name, tip]
     for cl, eid, par in commands(d, start):
-        if cl == 7 and eid == 2 and len(par) >= 2:  # extern app-data: object marker
-            obj = int.from_bytes(par[-2:], "big")
-            if len(par) >= 5:
-                fclass = int.from_bytes(par[3:5], "big")
+        if cl == 0 and eid == APS_BEGIN:
+            s = STR_RE.findall(par)
+            stack.append([s[1].decode("latin1") if len(s) > 1 else "?", None, None, None])
+            continue
+        if cl == 0 and eid == APS_END:
+            if stack:
+                stack.pop()
+            continue
+        if cl == 0 and eid in (END_PIC, END_META):
+            break
+        if cl == 9 and eid == 1:  # APS attribute: <name><SDR value>
+            s = STR_RE.findall(par)
+            if s and stack:
+                k = s[0].rstrip(b'"&)(').strip().decode("latin1")
+                v = s[1].decode("latin1") if len(s) > 1 else None
+                if k == "LayerName":
+                    for fr in stack:
+                        if fr[0] == "layer":
+                            fr[1] = v
+                elif k == "Name":
+                    stack[-1][2] = v
+                elif k == "ScreenTip":
+                    stack[-1][3] = v
             continue
         if cl != 4 or eid not in (POLYLINE, DISJOINT, POLYGON):
             continue
@@ -201,7 +229,10 @@ def _parse_tile(name):
             if len(cs) < 3:
                 continue
             g, t = Polygon(cs), "Polygon"
-        rows.append((square, facet, src, date, layer, fclass, obj, t, wkb.dumps(g)))
+        layer = next((fr[1] for fr in reversed(stack) if fr[1]), None)
+        gr = next((fr for fr in reversed(stack) if fr[0] == "grobject"), None)
+        rows.append((square, facet, src, date, layer,
+                     gr[2] if gr else None, gr[3] if gr else None, t, wkb.dumps(g)))
     return square, rows
 
 
@@ -218,8 +249,8 @@ SCHEMA = pa.schema(
         ("source", pa.string()),
         ("survey_date", pa.string()),
         ("layer", pa.string()),
-        ("feat_class", pa.int32()),
-        ("object_id", pa.int32()),
+        ("name", pa.string()),
+        ("screentip", pa.string()),
         ("etype", pa.string()),
         ("geometry", pa.binary()),
     ]
@@ -250,9 +281,8 @@ def batch(rows):
     return pa.record_batch(
         [
             pa.array(cols[0]), pa.array(cols[1]), pa.array(cols[2]),
-            pa.array(cols[3]), pa.array(cols[4]),
-            pa.array(cols[5], pa.int32()), pa.array(cols[6], pa.int32()),
-            pa.array(cols[7]), pa.array(cols[8], pa.binary()),
+            pa.array(cols[3]), pa.array(cols[4]), pa.array(cols[5]),
+            pa.array(cols[6]), pa.array(cols[7]), pa.array(cols[8], pa.binary()),
         ],
         schema=SCHEMA.with_metadata(geo_meta()),
     )
