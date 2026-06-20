@@ -1,0 +1,7 @@
+MapsViewerApril2026.zip
+output/
+sample/
+extract.log
+*.DLL
+*.dll
+__pycache__/
