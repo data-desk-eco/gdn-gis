@@ -4,7 +4,7 @@ reverse-engineers the vector map data shipped inside the cadent / national grid
 **MAPS Viewer** windows distribution (`MapsViewerApril2026.zip`) and assembles it
 into a single distribution-ready geoparquet of the gas distribution network.
 
-`extract.rs` is a **generic extractor for obfuscated-webcgm (`.mvf`) tile
+`src/main.rs` is a **generic extractor for obfuscated-webcgm (`.mvf`) tile
 distributions**: it decodes the tiles, keeps only the layers named in a config,
 and dissolves each feature's per-tile fragments into one coherent line by id **as
 it goes** — no intermediate. all dataset-specific knowledge (password, layer
@@ -85,7 +85,11 @@ hard-coded).
 one streaming pass, parallel over tiles (rayon, one cached zip archive per
 thread):
 
-1. decode each tile's header and picture body; walk the APS tree.
+1. decode each tile's header and locate where the plain-cgm picture body begins
+   (the obfuscated/plain boundary isn't a fixed structural marker, so it's found
+   by scanning for in-range geometry — a strict dense-body pass, then a lenient
+   pass that rescues tiny single-pipe tiles a dense floor would drop); walk the
+   APS tree.
 2. **keep only the gas assets** — primitives whose enclosing layer is a
    `... Mains & Plant` tier. the dense unattributed background linework (os
    as-built geography) and the cartographic annotation layers (`Dimensions`,
@@ -133,8 +137,20 @@ boundaries. fragments with no id are kept individually.
 
 | code | tier | pipes | km |
 |---|---|---:|---:|
-| lp | low pressure | 2,066,087 | 109,857 |
-| mp | medium pressure | 152,022 | 14,848 |
-| nhp | national high pressure | 15,585 | 3,439 |
+| lp | low pressure | 2,066,142 | 109,860 |
+| mp | medium pressure | 152,007 | 14,847 |
+| nhp | national high pressure | 15,765 | 3,479 |
 | ip | intermediate pressure | 12,620 | 2,981 |
-| lhp | local high pressure | 7,166 | 4,762 |
+| lhp | local high pressure | 7,166 | 4,764 |
+
+### completeness vs cadent's open data
+
+cross-checked against cadent's own *gas pipe infrastructure (gpi)* open-data
+geoparquet (≈2.27 m features, lp/mp only). after aligning the two on a 50 m grid
+the linework agrees to ~98 %: each side carries ~1.5–2 % the other lacks, a
+near-symmetric difference that is **vintage** — the open extract is newer than
+this april-2026 viewer snapshot — not missing extraction. note the open file
+omits the entire high/intermediate-pressure tier (≈35 k features) we carry, and
+segments mains finely by asset id where we dissolve them into one line per os
+feature id (the cleaner topological form); its per-segment split is an artefact
+of tile/asset granularity, not reproducible from — nor preferable to — ours.

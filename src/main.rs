@@ -43,6 +43,11 @@ const VDC_DEFAULT: i64 = 16000;
 
 static ZIP_PATH: OnceLock<String> = OnceLock::new();
 static PASSWORD: OnceLock<Vec<u8>> = OnceLock::new();
+// tile-parse failure diagnostics: a decode failure loses a whole tile's features
+static FAIL_READ: AtomicUsize = AtomicUsize::new(0);
+static FAIL_BOUNDS: AtomicUsize = AtomicUsize::new(0);
+static FAIL_START: AtomicUsize = AtomicUsize::new(0);
+static FAIL_START_GAS: AtomicUsize = AtomicUsize::new(0);
 
 // ---------------------------------------------------------------------- config
 
@@ -179,44 +184,53 @@ fn vdc_extent(db: &[u8]) -> (i64, i64) {
     (VDC_DEFAULT, VDC_DEFAULT)
 }
 
-/// offset of the first plausible plain-cgm picture-body command (after header).
-fn find_start(d: &[u8], db: &[u8]) -> Option<usize> {
-    let lo = find(db, b"Ymax").map(|j| j + 12).unwrap_or(380);
-    let mut s = lo;
-    let hi = (lo + 4000).min(d.len());
-    while s < hi {
-        let (mut tot, mut ok, mut nprim, mut good, mut p, mut n) = (0u32, 0u32, 0u32, true, s, 0);
-        while n < 25 {
-            match read_cmd(d, p) {
-                None => {
-                    good = false;
-                    break;
-                }
-                Some((cl, eid, qs, qe, np)) => {
-                    if cl == 4 && (eid == POLYLINE || eid == DISJOINT || eid == POLYGON) {
-                        nprim += 1;
-                        let par = &d[qs..qe];
-                        let m = par.len() / 2; // total int16 values
-                        for i in (0..m.saturating_sub(1)).step_by(2) {
-                            let x = i16::from_be_bytes([par[i * 2], par[i * 2 + 1]]) as i64;
-                            let y = i16::from_be_bytes([par[i * 2 + 2], par[i * 2 + 3]]) as i64;
-                            tot += 1;
-                            if (-3000..=19000).contains(&x) && (-3000..=19000).contains(&y) {
-                                ok += 1;
-                            }
-                        }
-                    }
-                    p = np;
-                    n += 1;
+/// score a candidate body offset: read up to `cmds` commands and return
+/// `(primitives, points, in-range points)`. obfuscated header bytes read as plain
+/// cgm give ~random coordinates, so a high in-range ratio marks the real body.
+fn body_score(d: &[u8], s: usize, cmds: u32) -> (u32, u32, u32) {
+    let (mut tot, mut ok, mut nprim, mut p, mut n) = (0u32, 0u32, 0u32, s, 0);
+    while n < cmds {
+        let (cl, eid, qs, qe, np) = match read_cmd(d, p) {
+            Some(c) => c,
+            None => break,
+        };
+        if cl == 4 && (eid == POLYLINE || eid == DISJOINT || eid == POLYGON) {
+            nprim += 1;
+            let par = &d[qs..qe];
+            let m = par.len() / 2;
+            for i in (0..m.saturating_sub(1)).step_by(2) {
+                let x = i16::from_be_bytes([par[i * 2], par[i * 2 + 1]]) as i64;
+                let y = i16::from_be_bytes([par[i * 2 + 2], par[i * 2 + 3]]) as i64;
+                tot += 1;
+                if (-3000..=19000).contains(&x) && (-3000..=19000).contains(&y) {
+                    ok += 1;
                 }
             }
         }
-        if good && nprim >= 2 && tot >= 20 && (ok as f64) / (tot as f64) > 0.95 {
-            return Some(s);
-        }
-        s += 2;
+        p = np;
+        n += 1;
     }
-    None
+    (nprim, tot, ok)
+}
+
+/// offset of the first plausible plain-cgm picture-body command (after header).
+/// the in-range ratio (random header garbage scores ~0.33) is the discriminator.
+/// two tiers: a strict dense-geometry pass first, so big tiles skip past any
+/// obfuscated-header bytes that coincidentally parse as a stray primitive; then a
+/// lenient pass that rescues sparse tiles (a single short main, little background)
+/// the strict floor would drop. the lenient pass only runs when the strict pass
+/// finds nothing, and is harmless on truly empty tiles — parse_tile keeps only
+/// primitives inside a matching layer aps, so a wrong offset yields no features.
+fn find_start(d: &[u8], db: &[u8]) -> Option<usize> {
+    let lo = find(db, b"Ymax").map(|j| j + 12).unwrap_or(380);
+    let hi = (lo + 4000).min(d.len());
+    let scan = |cmds, min_prim, min_pts| {
+        (lo..hi).step_by(2).find(|&s| {
+            let (nprim, tot, ok) = body_score(d, s, cmds);
+            nprim >= min_prim && tot >= min_pts && (ok as f64) / (tot as f64) > 0.95
+        })
+    };
+    scan(25, 2, 20).or_else(|| scan(40, 1, 2))
 }
 
 /// runs of >=2 printable ascii bytes.
@@ -443,7 +457,10 @@ fn read_tile(idx: usize) -> Option<Vec<u8>> {
 fn parse_tile(idx: usize, name: &str, b: &mut Bucket, cfg: &Config) -> usize {
     let d = match read_tile(idx) {
         Some(d) => d,
-        None => return 0,
+        None => {
+            FAIL_READ.fetch_add(1, Relaxed);
+            return 0;
+        }
     };
     let db = deob(&d);
     static META: OnceLock<Regex> = OnceLock::new();
@@ -455,13 +472,24 @@ fn parse_tile(idx: usize, name: &str, b: &mut Bucket, cfg: &Config) -> usize {
     let g = |k: &str| meta.get(k).and_then(|v| v.parse::<f64>().ok());
     let (x0, y0, x1, y1) = match (g("Xmin"), g("Ymin"), g("Xmax"), g("Ymax")) {
         (Some(a), Some(b), Some(c), Some(d)) => (a, b, c, d),
-        _ => return 0,
+        _ => {
+            FAIL_BOUNDS.fetch_add(1, Relaxed);
+            return 0;
+        }
     };
     let (vw, vh) = vdc_extent(&db);
     let (sx, sy) = ((x1 - x0) / vw as f64, (y1 - y0) / vh as f64);
     let start = match find_start(&d, &db) {
         Some(s) => s,
-        None => return 0,
+        None => {
+            FAIL_START.fetch_add(1, Relaxed);
+            // diagnostic: did we just drop a tile that actually carries gas
+            // linework? the layer name lives as plain ascii in the picture body.
+            if cfg.keep.layer_contains.iter().any(|k| find(&d, k.as_bytes()).is_some()) {
+                FAIL_START_GAS.fetch_add(1, Relaxed);
+            }
+            return 0;
+        }
     };
     let facet = meta.get("Facet").cloned().unwrap_or_else(|| {
         std::path::Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string()
@@ -769,6 +797,11 @@ fn main() {
         .reduce(Bucket::default, merge);
     mon.join().ok();
     eprintln!();
+    let (fr, fb, fs, fg) =
+        (FAIL_READ.load(Relaxed), FAIL_BOUNDS.load(Relaxed), FAIL_START.load(Relaxed), FAIL_START_GAS.load(Relaxed));
+    if fr + fb + fs > 0 {
+        eprintln!("  dropped tiles: {fr} unreadable, {fb} no-bounds, {fs} no-picture-start ({fg} of which contain gas linework)");
+    }
     eprintln!("  dissolving {} named features, {} unnamed ...", bucket.named.len(), bucket.unnamed.len());
 
     // dissolve named fragments into coherent features; keep unnamed as-is
