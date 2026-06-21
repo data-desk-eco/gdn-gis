@@ -1,11 +1,13 @@
-// single-pass extractor for the cadent / national-grid "maps viewer" distribution.
+// generic extractor for obfuscated-webcgm (.mvf) tile distributions, such as the
+// cadent / national-grid "maps viewer" windows product.
 //
-// decodes the obfuscated webcgm .mvf tiles, keeps only the gas-asset linework
-// (the "... mains & plant" layers), and dissolves every pipe's per-tile
-// fragments into one coherent line by os feature id as it goes — writing a
-// single distribution-ready geoparquet (epsg:27700) with no intermediate.
+// decodes the tiles, keeps only the layers named in the config, and dissolves
+// every feature's per-tile fragments into one coherent line by id **as it goes**
+// — writing a single geoparquet (no intermediate). all dataset-specific knowledge
+// (password, layer filter, attribute vocabulary, labelling, crs) lives in a toml
+// config; the engine here is generic.
 //
-// usage: mvf-extract [ZIP] [-o OUT.parquet] [-p PASSWORD] [--square SK] [--limit N] [-j JOBS]
+// usage: mvf-extract [CONFIG.toml] [ZIP] [-o OUT] [-p PASSWORD] [--square SK] [--limit N] [-j JOBS]
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -17,6 +19,7 @@ use std::time::Instant;
 
 use rayon::prelude::*;
 use regex::bytes::Regex;
+use serde::Deserialize;
 use zip::ZipArchive;
 
 use arrow::array::{ArrayRef, BinaryArray, BooleanArray, Float64Array, StringArray};
@@ -40,6 +43,74 @@ const VDC_DEFAULT: i64 = 16000;
 
 static ZIP_PATH: OnceLock<String> = OnceLock::new();
 static PASSWORD: OnceLock<Vec<u8>> = OnceLock::new();
+
+// ---------------------------------------------------------------------- config
+
+#[derive(Deserialize)]
+struct Config {
+    #[serde(default)]
+    zip: Option<String>,
+    #[serde(default)]
+    output: Option<String>,
+    password: String,
+    square_index: usize,
+    crs: String,
+    aps: Aps,
+    keep: Keep,
+    #[serde(default)]
+    tier: Option<Tier>,
+    #[serde(default)]
+    spec: Option<Spec>,
+    #[serde(default)]
+    area: Option<Area>,
+}
+
+#[derive(Deserialize)]
+struct Aps {
+    layer: String,
+    feature: String,
+    layer_attr: String,
+    id_attr: String,
+    spec_attr: String,
+    #[serde(default)]
+    id_null: Vec<String>,
+    #[serde(default)]
+    strip_layer_prefix: bool,
+}
+
+#[derive(Deserialize)]
+struct Keep {
+    layer_contains: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct Tier {
+    code_column: String,
+    label_column: String,
+    map: Vec<TierRow>,
+}
+
+#[derive(Deserialize)]
+struct TierRow {
+    #[serde(rename = "match")]
+    m: String,
+    code: String,
+    label: String,
+}
+
+#[derive(Deserialize)]
+struct Spec {
+    regex: String,
+    materials: HashMap<String, String>,
+}
+
+#[derive(Deserialize)]
+struct Area {
+    file: String,
+    column: String,
+    #[serde(default)]
+    skip_section: Option<String>,
+}
 
 // ---------------------------------------------------------------- cgm decode
 
@@ -170,7 +241,7 @@ fn latin1(b: &[u8]) -> String {
     b.iter().map(|&c| c as char).collect()
 }
 
-/// decode int16 vdc pairs -> (easting, northing) in epsg:27700.
+/// decode int16 vdc pairs -> (easting, northing) in the tile's crs.
 fn pts(par: &[u8], x0: f64, y0: f64, sx: f64, sy: f64) -> Vec<(f64, f64)> {
     let n = par.len() / 4;
     (0..n)
@@ -235,8 +306,7 @@ fn linemerge(frags: Vec<Vec<(f64, f64)>>) -> Vec<Vec<(f64, f64)>> {
                     None => break,
                 };
                 visited[f] = true;
-                // orient fragment to start at nd
-                let mut seg = frags[f].clone();
+                let mut seg = frags[f].clone(); // orient to start at nd
                 if end == 1 {
                     seg.reverse();
                 }
@@ -336,13 +406,25 @@ struct Bucket {
     unnamed: Vec<(String, Unnamed)>,       // (cleaned layer, feature)
 }
 
+/// one output feature: a dissolved named pipe or an as-is unnamed primitive.
+struct Row {
+    fid: Option<String>,
+    layer: String,
+    tip: Option<String>,
+    square: String,
+    facet: String,
+    src: Option<String>,
+    date: Option<String>,
+    geom: Geom,
+}
+
 thread_local! {
-    // one archive per worker thread: opening parses the 168k-entry central
-    // directory, so we cache it rather than reopen per tile.
+    // one archive per worker thread: opening parses the huge central directory,
+    // so we cache it rather than reopen per tile.
     static ARCH: RefCell<Option<ZipArchive<BufReader<File>>>> = const { RefCell::new(None) };
 }
 
-/// read one .mvf entry's decrypted+inflated bytes via the thread-local archive.
+/// read one tile's decrypted+inflated bytes via the thread-local archive.
 fn read_tile(idx: usize) -> Option<Vec<u8>> {
     ARCH.with(|c| {
         let mut o = c.borrow_mut();
@@ -357,8 +439,8 @@ fn read_tile(idx: usize) -> Option<Vec<u8>> {
     })
 }
 
-/// merge one tile's gas features into the per-thread bucket.
-fn parse_tile(idx: usize, name: &str, b: &mut Bucket) -> usize {
+/// merge one tile's kept features into the per-thread bucket.
+fn parse_tile(idx: usize, name: &str, b: &mut Bucket, cfg: &Config) -> usize {
     let d = match read_tile(idx) {
         Some(d) => d,
         None => return 0,
@@ -384,9 +466,14 @@ fn parse_tile(idx: usize, name: &str, b: &mut Bucket) -> usize {
     let facet = meta.get("Facet").cloned().unwrap_or_else(|| {
         std::path::Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string()
     });
-    let square = name.split('/').nth(3).unwrap_or(&facet[..facet.len().min(2)]).to_string();
+    let square = name
+        .split('/')
+        .nth(cfg.square_index)
+        .unwrap_or(&facet[..facet.len().min(2)])
+        .to_string();
     let src = meta.get("Source").cloned();
     let date = meta.get("Date").cloned();
+    let a = &cfg.aps;
 
     // walk the application-structure tree; stack frames: (type, layer, name, tip)
     let mut stack: Vec<(String, Option<String>, Option<String>, Option<String>)> = Vec::new();
@@ -414,17 +501,16 @@ fn parse_tile(idx: usize, name: &str, b: &mut Bucket) -> usize {
                 let k = latin1(r[0]);
                 let k = k.trim_end_matches(['"', '&', ')', '(']).trim();
                 let v = if r.len() > 1 { Some(latin1(r[1])) } else { None };
-                match k {
-                    "LayerName" => {
-                        for fr in stack.iter_mut() {
-                            if fr.0 == "layer" {
-                                fr.1 = v.clone();
-                            }
+                if k == a.layer_attr {
+                    for fr in stack.iter_mut() {
+                        if fr.0 == a.layer {
+                            fr.1 = v.clone();
                         }
                     }
-                    "Name" => stack.last_mut().unwrap().2 = v,
-                    "ScreenTip" => stack.last_mut().unwrap().3 = v,
-                    _ => {}
+                } else if k == a.id_attr {
+                    stack.last_mut().unwrap().2 = v;
+                } else if k == a.spec_attr {
+                    stack.last_mut().unwrap().3 = v;
                 }
             }
             continue;
@@ -432,12 +518,16 @@ fn parse_tile(idx: usize, name: &str, b: &mut Bucket) -> usize {
         if cl != 4 || (eid != POLYLINE && eid != DISJOINT && eid != POLYGON) {
             continue;
         }
-        // effective layer; keep only the gas mains & plant layers
+        // effective layer; keep only those matching the config filter
         let layer = match stack.iter().rev().find_map(|fr| fr.1.as_ref()) {
-            Some(l) if l.contains("Mains & Plant") => l,
+            Some(l) if cfg.keep.layer_contains.iter().any(|k| l.contains(k)) => l,
             _ => continue,
         };
-        let layer_clean = layer.trim_start_matches(|c: char| !c.is_ascii_alphabetic()).to_string();
+        let layer_clean = if a.strip_layer_prefix {
+            layer.trim_start_matches(|c: char| !c.is_ascii_alphabetic()).to_string()
+        } else {
+            layer.clone()
+        };
         let mut cs = pts(par, x0, y0, sx, sy);
         if eid != DISJOINT {
             cs.dedup(); // drop consecutive duplicate vertices (zero-length segments)
@@ -445,10 +535,10 @@ fn parse_tile(idx: usize, name: &str, b: &mut Bucket) -> usize {
         if cs.len() < 2 {
             continue;
         }
-        let gr = stack.iter().rev().find(|fr| fr.0 == "grobject");
+        let gr = stack.iter().rev().find(|fr| fr.0 == a.feature);
         let fid = gr
             .and_then(|f| f.2.clone())
-            .filter(|n| !n.is_empty() && n != "UNKNOWN");
+            .filter(|n| !n.is_empty() && !a.id_null.iter().any(|z| z == n));
         let tip = gr.and_then(|f| f.3.clone());
         kept += 1;
 
@@ -536,33 +626,6 @@ fn merge(mut a: Bucket, b: Bucket) -> Bucket {
 
 // ----------------------------------------------------------------- labelling
 
-fn pressure(layer: &str) -> (Option<&'static str>, String) {
-    match layer {
-        "Low Pressure Mains & Plant" => (Some("lp"), "low pressure".into()),
-        "Medium Pressure Mains & Plant" => (Some("mp"), "medium pressure".into()),
-        "Intermediate Pressure Mains & Plant" => (Some("ip"), "intermediate pressure".into()),
-        "Local High Pressure Mains & Plant" => (Some("lhp"), "local high pressure".into()),
-        "National High Pressure Mains & Plant" => (Some("nhp"), "national high pressure".into()),
-        _ => (None, layer.to_lowercase()),
-    }
-}
-
-fn material(m: &str) -> Option<&'static str> {
-    Some(match m {
-        "PE" => "polyethylene",
-        "CI" => "cast iron",
-        "SI" => "spun iron",
-        "DI" => "ductile iron",
-        "ST" => "steel",
-        "PV" => "pvc",
-        "AS" => "asbestos cement",
-        "LE" => "lead",
-        "UN" => "unknown",
-        "NA" => "not available",
-        _ => return None,
-    })
-}
-
 fn dia_mm(d: Option<&str>, u: Option<&str>) -> Option<f64> {
     let v: f64 = d?.parse().ok()?;
     match u {
@@ -574,22 +637,18 @@ fn dia_mm(d: Option<&str>, u: Option<&str>) -> Option<f64> {
 }
 
 /// screentip -> (diameter_mm, material, host_diameter_mm, host_material)
-fn parse_tip(t: Option<&str>, re: &regex::Regex) -> (Option<f64>, Option<&'static str>, Option<f64>, Option<&'static str>) {
-    let t = match t {
-        Some(t) => t,
-        None => return (None, None, None, None),
-    };
-    let c = match re.captures(t) {
+fn parse_tip<'a>(
+    t: Option<&str>,
+    re: &regex::Regex,
+    mats: &'a HashMap<String, String>,
+) -> (Option<f64>, Option<&'a str>, Option<f64>, Option<&'a str>) {
+    let c = match t.and_then(|t| re.captures(t)) {
         Some(c) => c,
         None => return (None, None, None, None),
     };
-    let f = |i| c.get(i).map(|m| m.as_str());
-    (
-        dia_mm(f(1), f(2)),
-        f(3).and_then(material),
-        dia_mm(f(4), f(5)),
-        f(6).and_then(material),
-    )
+    let s = |i| c.get(i).map(|m| m.as_str());
+    let mat = |i| s(i).and_then(|m| mats.get(m).map(|s| s.as_str()));
+    (dia_mm(s(1), s(2)), mat(3), dia_mm(s(4), s(5)), mat(6))
 }
 
 fn tenk(facet: &str) -> String {
@@ -601,17 +660,18 @@ fn tenk(facet: &str) -> String {
     }
 }
 
-/// 10 km national-grid tile -> cadent network area, from meta/NG.ADF.
-fn areas() -> HashMap<String, String> {
+/// grid-tile -> area name, from an .adf-style ini (sections are area names,
+/// `Tile<n>=<tile>` entries list the tiles they contain).
+fn areas(a: &Area) -> HashMap<String, String> {
     let mut out = HashMap::new();
-    let txt = std::fs::read_to_string("meta/NG.ADF").unwrap_or_default();
+    let txt = std::fs::read_to_string(&a.file).unwrap_or_default();
     let hdr = Regex::new(r"^\[(\w+)\]").unwrap();
     let tile = Regex::new(r"^Tile\d+=(\w+)").unwrap();
     let mut cur: Option<String> = None;
     for ln in txt.lines() {
         if let Some(h) = hdr.captures(ln.as_bytes()) {
             let name = latin1(&h[1]);
-            if name != "Areas" {
+            if a.skip_section.as_deref() != Some(name.as_str()) {
                 cur = Some(name);
             }
         } else if let (Some(t), Some(c)) = (tile.captures(ln.as_bytes()), &cur) {
@@ -624,25 +684,38 @@ fn areas() -> HashMap<String, String> {
 // ---------------------------------------------------------------------- main
 
 fn main() {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut zip = "MapsViewerApril2026.zip".to_string();
-    let mut out = "dist/cadent_gas_network.parquet".to_string();
-    let mut pw = "reply-Dy7bge".to_string();
-    let mut square: Option<String> = None;
-    let mut limit = 0usize;
-    let mut jobs = 0usize;
-    let mut it = args.iter();
+    // args: [config] [zip] [-o out] [-p pw] [--square s] [--limit n] [-j j]
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    let mut config = "config.toml".to_string();
+    let (mut zip, mut out, mut pw): (Option<String>, Option<String>, Option<String>) = (None, None, None);
+    let (mut square, mut limit, mut jobs) = (None, 0usize, 0usize);
+    let mut positional = 0;
+    let mut it = argv.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
-            "-o" => out = it.next().unwrap().clone(),
-            "-p" => pw = it.next().unwrap().clone(),
+            "-o" => out = Some(it.next().unwrap().clone()),
+            "-p" => pw = Some(it.next().unwrap().clone()),
             "--square" => square = Some(it.next().unwrap().clone()),
             "--limit" => limit = it.next().unwrap().parse().unwrap(),
             "-j" => jobs = it.next().unwrap().parse().unwrap(),
-            s if !s.starts_with('-') => zip = s.to_string(),
+            "--config" => config = it.next().unwrap().clone(),
+            s if !s.starts_with('-') => {
+                match positional {
+                    0 if s.ends_with(".toml") => config = s.to_string(),
+                    _ => zip = Some(s.to_string()),
+                }
+                positional += 1;
+            }
             _ => {}
         }
     }
+
+    let cfg: Config = toml::from_str(&std::fs::read_to_string(&config).expect("read config"))
+        .expect("parse config");
+    let zip = zip.or_else(|| cfg.zip.clone()).expect("no zip path (config or arg)");
+    let out = out.or_else(|| cfg.output.clone()).unwrap_or_else(|| "out.parquet".into());
+    let pw = pw.unwrap_or_else(|| cfg.password.clone());
+
     if jobs > 0 {
         rayon::ThreadPoolBuilder::new().num_threads(jobs).build_global().unwrap();
     }
@@ -650,19 +723,19 @@ fn main() {
     PASSWORD.set(pw.into_bytes()).unwrap();
     let t0 = Instant::now();
 
-    // index the .mvf entries
+    // index the tile entries
     eprint!("opening {} ...\r", zip);
     let arch = ZipArchive::new(BufReader::new(File::open(&zip).expect("open zip"))).expect("read zip");
     let mut entries: Vec<(usize, String)> = (0..arch.len())
         .filter_map(|i| arch.name_for_index(i).map(|n| (i, n.to_string())))
         .filter(|(_, n)| n.to_lowercase().ends_with(".mvf"))
-        .filter(|(_, n)| square.as_ref().map_or(true, |s| n.split('/').nth(3) == Some(s.as_str())))
+        .filter(|(_, n)| square.as_ref().map_or(true, |s| n.split('/').nth(cfg.square_index) == Some(s.as_str())))
         .collect();
     if limit > 0 {
         entries.truncate(limit);
     }
     let total = entries.len();
-    eprintln!("\rfound {total} gas tiles{}            ", square.as_ref().map(|s| format!(" in {s}")).unwrap_or_default());
+    eprintln!("\rfound {total} tiles{}            ", square.as_ref().map(|s| format!(" in {s}")).unwrap_or_default());
 
     // progress monitor
     let done = Arc::new(AtomicUsize::new(0));
@@ -675,7 +748,7 @@ fn main() {
             let f = k2.load(Relaxed);
             let pct = 100.0 * n as f64 / total.max(1) as f64;
             let rate = n as f64 / s.elapsed().as_secs_f64().max(1e-3);
-            eprint!("\r  parsing  {n:>7}/{total} tiles  {pct:5.1}%   {f:>8} gas features   {rate:6.0} tiles/s   ");
+            eprint!("\r  parsing  {n:>7}/{total} tiles  {pct:5.1}%   {f:>9} features   {rate:6.0} tiles/s   ");
             let _ = std::io::stderr().flush();
             if n >= total {
                 break;
@@ -688,7 +761,7 @@ fn main() {
     let bucket = entries
         .par_iter()
         .fold(Bucket::default, |mut b, (idx, name)| {
-            let k = parse_tile(*idx, name, &mut b);
+            let k = parse_tile(*idx, name, &mut b, &cfg);
             done.fetch_add(1, Relaxed);
             kept.fetch_add(k, Relaxed);
             b
@@ -696,29 +769,9 @@ fn main() {
         .reduce(Bucket::default, merge);
     mon.join().ok();
     eprintln!();
+    eprintln!("  dissolving {} named features, {} unnamed ...", bucket.named.len(), bucket.unnamed.len());
 
-    let n_named = bucket.named.len();
-    let n_unnamed = bucket.unnamed.len();
-    eprintln!("  dissolving {} named pipes, {} unnamed features ...", n_named, n_unnamed);
-
-    // dissolve named fragments into coherent pipes (parallel), keep unnamed as-is
-    let area = areas();
-    let tip_re = regex::Regex::new(
-        r#"^(?P<d>\d+(?:\.\d+)?)\s*(?P<u>MM|")?\s*(?P<m>[A-Z]{2})?(?:\s*\(IN\s*(?P<hd>\d+(?:\.\d+)?)\s*(?P<hu>MM|")?\s*(?P<hm>[A-Z]{2})?\s*\))?\s*$"#,
-    )
-    .unwrap();
-
-    struct Row {
-        fid: Option<String>,
-        layer: String,
-        tip: Option<String>,
-        square: String,
-        facet: String,
-        src: Option<String>,
-        date: Option<String>,
-        geom: Geom,
-    }
-
+    // dissolve named fragments into coherent features; keep unnamed as-is
     let mut rows: Vec<Row> = bucket
         .named
         .into_par_iter()
@@ -747,118 +800,133 @@ fn main() {
         geom: u.geom,
     }));
 
-    // build columns
+    write_parquet(rows, &cfg, &out, t0);
+}
+
+fn write_parquet(rows: Vec<Row>, cfg: &Config, out: &str, t0: Instant) {
+    let area = cfg.area.as_ref().map(areas);
+    let spec_re = cfg.spec.as_ref().map(|s| regex::Regex::new(&s.regex).unwrap());
+    let tier_idx: HashMap<&str, (&str, &str)> = cfg
+        .tier
+        .as_ref()
+        .map(|t| t.map.iter().map(|r| (r.m.as_str(), (r.code.as_str(), r.label.as_str()))).collect())
+        .unwrap_or_default();
+
     let n = rows.len();
     let mut feature_id = Vec::with_capacity(n);
-    let mut pressure_code = Vec::with_capacity(n);
-    let mut pressure_v = Vec::with_capacity(n);
-    let mut diameter = Vec::with_capacity(n);
-    let mut mat = Vec::with_capacity(n);
-    let mut hdia = Vec::with_capacity(n);
-    let mut hmat = Vec::with_capacity(n);
-    let mut inserted = Vec::with_capacity(n);
+    let (mut tcode, mut tlabel) = (Vec::with_capacity(n), Vec::with_capacity(n));
+    let (mut dia, mut mat, mut hdia, mut hmat, mut ins) =
+        (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
     let mut screentip = Vec::with_capacity(n);
     let mut net = Vec::with_capacity(n);
-    let mut sq = Vec::with_capacity(n);
-    let mut tk = Vec::with_capacity(n);
-    let mut len_m = Vec::with_capacity(n);
-    let mut source = Vec::with_capacity(n);
-    let mut sdate = Vec::with_capacity(n);
-    let mut et = Vec::with_capacity(n);
+    let (mut sq, mut tk, mut len_m) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    let (mut source, mut sdate, mut et) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
     let mut geomb: Vec<Vec<u8>> = Vec::with_capacity(n);
     let (mut minx, mut miny, mut maxx, mut maxy) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
-    let mut by_pressure: HashMap<&str, (usize, f64)> = HashMap::new();
+    let mut summary: HashMap<String, (usize, f64)> = HashMap::new();
     let mut totlen = 0.0;
+    let empty_mats = HashMap::new();
+    let mats = cfg.spec.as_ref().map(|s| &s.materials).unwrap_or(&empty_mats);
 
     for r in &rows {
-        let (pc, pf) = pressure(&r.layer);
-        let (d, m, hd, hm) = parse_tip(r.tip.as_deref(), &tip_re);
+        let g = &r.geom;
         let t = tenk(&r.facet);
-        let l = (length(&r.geom) * 100.0).round() / 100.0;
-        let each = |g: &Geom, f: &mut dyn FnMut((f64, f64))| match g {
+        let l = (length(g) * 100.0).round() / 100.0;
+        let visit = |f: &mut dyn FnMut((f64, f64))| match g {
             Geom::Line(p) | Geom::Poly(p) => p.iter().for_each(|&pt| f(pt)),
             Geom::Multi(ps) => ps.iter().flatten().for_each(|&pt| f(pt)),
         };
-        each(&r.geom, &mut |p| {
+        visit(&mut |p| {
             minx = minx.min(p.0);
             miny = miny.min(p.1);
             maxx = maxx.max(p.0);
             maxy = maxy.max(p.1);
         });
-        let e = by_pressure.entry(pc.unwrap_or("other")).or_insert((0, 0.0));
-        e.0 += 1;
-        e.1 += l;
-        totlen += l;
 
         feature_id.push(r.fid.clone());
-        pressure_code.push(pc.map(|s| s.to_string()));
-        pressure_v.push(Some(pf));
-        diameter.push(d);
-        mat.push(m.map(|s| s.to_string()));
-        hdia.push(hd);
-        hmat.push(hm.map(|s| s.to_string()));
-        inserted.push(Some(hd.is_some() || hm.is_some()));
+        if cfg.tier.is_some() {
+            let tier = tier_idx.get(r.layer.as_str()).copied();
+            tcode.push(tier.map(|(c, _)| c.to_string()));
+            tlabel.push(Some(tier.map_or_else(|| r.layer.to_lowercase(), |(_, l)| l.to_string())));
+            let e = summary.entry(tier.map_or("other", |(c, _)| c).to_string()).or_insert((0, 0.0));
+            e.0 += 1;
+            e.1 += l;
+        }
+        if let Some(re) = &spec_re {
+            let (d, m, hd, hm) = parse_tip(r.tip.as_deref(), re, mats);
+            dia.push(d);
+            mat.push(m.map(str::to_string));
+            hdia.push(hd);
+            hmat.push(hm.map(str::to_string));
+            ins.push(Some(hd.is_some() || hm.is_some()));
+        }
         screentip.push(r.tip.clone());
-        net.push(area.get(&t).cloned());
+        if let Some(a) = &area {
+            net.push(a.get(&t).cloned());
+        }
         sq.push(Some(r.square.clone()));
         tk.push(Some(t));
         len_m.push(Some(l));
         source.push(r.src.clone());
         sdate.push(r.date.clone());
-        et.push(Some(etype(&r.geom)));
-        geomb.push(wkb(&r.geom));
+        et.push(Some(etype(g)));
+        geomb.push(wkb(g));
+        totlen += l;
     }
 
-    // assemble geoparquet
-    let cols: Vec<(&str, ArrayRef)> = vec![
-        ("feature_id", Arc::new(StringArray::from(feature_id)) as ArrayRef),
-        ("pressure_code", Arc::new(StringArray::from(pressure_code))),
-        ("pressure", Arc::new(StringArray::from(pressure_v))),
-        ("diameter_mm", Arc::new(Float64Array::from(diameter))),
-        ("material", Arc::new(StringArray::from(mat))),
-        ("host_diameter_mm", Arc::new(Float64Array::from(hdia))),
-        ("host_material", Arc::new(StringArray::from(hmat))),
-        ("inserted", Arc::new(BooleanArray::from(inserted))),
-        ("screentip", Arc::new(StringArray::from(screentip))),
-        ("network_area", Arc::new(StringArray::from(net))),
-        ("square", Arc::new(StringArray::from(sq))),
-        ("tenk", Arc::new(StringArray::from(tk))),
-        ("length_m", Arc::new(Float64Array::from(len_m))),
-        ("source", Arc::new(StringArray::from(source))),
-        ("survey_date", Arc::new(StringArray::from(sdate))),
-        ("etype", Arc::new(StringArray::from(et))),
-        ("geometry", Arc::new(BinaryArray::from_iter(geomb.iter().map(Some)))),
-    ];
-    let fields: Vec<Field> = cols
-        .iter()
-        .map(|(name, arr)| Field::new(*name, arr.data_type().clone(), true))
-        .collect();
+    // assemble columns in a stable order; domain groups appear only if configured
+    let mut cols: Vec<(String, ArrayRef)> = Vec::new();
+    cols.push(("feature_id".into(), Arc::new(StringArray::from(feature_id))));
+    if let Some(t) = &cfg.tier {
+        cols.push((t.code_column.clone(), Arc::new(StringArray::from(tcode))));
+        cols.push((t.label_column.clone(), Arc::new(StringArray::from(tlabel))));
+    }
+    if cfg.spec.is_some() {
+        cols.push(("diameter_mm".into(), Arc::new(Float64Array::from(dia))));
+        cols.push(("material".into(), Arc::new(StringArray::from(mat))));
+        cols.push(("host_diameter_mm".into(), Arc::new(Float64Array::from(hdia))));
+        cols.push(("host_material".into(), Arc::new(StringArray::from(hmat))));
+        cols.push(("inserted".into(), Arc::new(BooleanArray::from(ins))));
+    }
+    cols.push(("screentip".into(), Arc::new(StringArray::from(screentip))));
+    if let Some(a) = &cfg.area {
+        cols.push((a.column.clone(), Arc::new(StringArray::from(net))));
+    }
+    cols.push(("square".into(), Arc::new(StringArray::from(sq))));
+    cols.push(("tenk".into(), Arc::new(StringArray::from(tk))));
+    cols.push(("length_m".into(), Arc::new(Float64Array::from(len_m))));
+    cols.push(("source".into(), Arc::new(StringArray::from(source))));
+    cols.push(("survey_date".into(), Arc::new(StringArray::from(sdate))));
+    cols.push(("etype".into(), Arc::new(StringArray::from(et))));
+    cols.push(("geometry".into(), Arc::new(BinaryArray::from_iter(geomb.iter().map(Some)))));
+
+    let fields: Vec<Field> = cols.iter().map(|(name, arr)| Field::new(name, arr.data_type().clone(), true)).collect();
     let schema = Arc::new(Schema::new(fields));
     let batch = RecordBatch::try_new(schema.clone(), cols.into_iter().map(|(_, a)| a).collect()).unwrap();
 
-    if let Some(p) = std::path::Path::new(&out).parent() {
+    if let Some(p) = std::path::Path::new(out).parent() {
         std::fs::create_dir_all(p).ok();
     }
     let geo = format!(
         r#"{{"version":"1.1.0","primary_column":"geometry","columns":{{"geometry":{{"encoding":"WKB","geometry_types":["LineString","MultiLineString","Polygon"],"crs":{},"bbox":[{},{},{},{}]}}}}}}"#,
-        CRS, minx, miny, maxx, maxy
+        cfg.crs, minx, miny, maxx, maxy
     );
     let props = WriterProperties::builder().set_compression(Compression::ZSTD(ZstdLevel::default())).build();
-    let mut w = ArrowWriter::try_new(File::create(&out).unwrap(), schema, Some(props)).unwrap();
+    let mut w = ArrowWriter::try_new(File::create(out).unwrap(), schema, Some(props)).unwrap();
     w.write(&batch).unwrap();
     w.append_key_value_metadata(KeyValue::new("geo".into(), geo));
     w.close().unwrap();
 
     // summary
-    eprintln!("\n  {n} pipes  ->  {out}");
-    let mut tiers: Vec<_> = by_pressure.into_iter().collect();
-    tiers.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
-    eprintln!("  {:<22} {:>10} {:>12}", "tier", "pipes", "km");
-    for (code, (cnt, km)) in &tiers {
-        eprintln!("  {:<22} {:>10} {:>12.1}", code, cnt, km / 1000.0);
+    eprintln!("\n  {n} features  ->  {out}");
+    if cfg.tier.is_some() {
+        let mut tiers: Vec<_> = summary.into_iter().collect();
+        tiers.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        eprintln!("  {:<10} {:>10} {:>12}", "tier", "features", "km");
+        for (code, (cnt, km)) in &tiers {
+            eprintln!("  {:<10} {:>10} {:>12.1}", code, cnt, km / 1000.0);
+        }
     }
-    eprintln!("  {:<22} {:>10} {:>12.1}", "total", n, totlen / 1000.0);
+    eprintln!("  {:<10} {:>10} {:>12.1}", "total", n, totlen / 1000.0);
     eprintln!("  done in {:.1}s", t0.elapsed().as_secs_f64());
 }
-
-const CRS: &str = r#"{"$schema":"https://proj.org/schemas/v0.7/projjson.schema.json","type":"ProjectedCRS","name":"OSGB36 / British National Grid","base_crs":{"name":"OSGB36","datum":{"type":"GeodeticReferenceFrame","name":"Ordnance Survey of Great Britain 1936","ellipsoid":{"name":"Airy 1830","semi_major_axis":6377563.396,"inverse_flattening":299.3249646}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4277}},"conversion":{"name":"British National Grid","method":{"name":"Transverse Mercator","id":{"authority":"EPSG","code":9807}},"parameters":[{"name":"Latitude of natural origin","value":49,"unit":"degree","id":{"authority":"EPSG","code":8801}},{"name":"Longitude of natural origin","value":-2,"unit":"degree","id":{"authority":"EPSG","code":8802}},{"name":"Scale factor at natural origin","value":0.9996012717,"unit":"unity","id":{"authority":"EPSG","code":8805}},{"name":"False easting","value":400000,"unit":"metre","id":{"authority":"EPSG","code":8806}},{"name":"False northing","value":-100000,"unit":"metre","id":{"authority":"EPSG","code":8807}}]},"coordinate_system":{"subtype":"Cartesian","axis":[{"name":"Easting","abbreviation":"E","direction":"east","unit":"metre"},{"name":"Northing","abbreviation":"N","direction":"north","unit":"metre"}]},"id":{"authority":"EPSG","code":27700}}"#;

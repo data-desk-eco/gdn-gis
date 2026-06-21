@@ -4,26 +4,51 @@ reverse-engineers the vector map data shipped inside the cadent / national grid
 **MAPS Viewer** windows distribution (`MapsViewerApril2026.zip`) and assembles it
 into a single distribution-ready geoparquet of the gas distribution network.
 
-a single rust pass (`extract.rs`) decodes the 168,458 obfuscated `.mvf` tiles,
-keeps only the gas-asset linework, and dissolves each pipe's per-tile fragments
-into one coherent line by os feature id **as it goes** — no intermediate. the
-whole distribution (2.7 GB, 168k tiles) is processed in ~30 s.
+`extract.rs` is a **generic extractor for obfuscated-webcgm (`.mvf`) tile
+distributions**: it decodes the tiles, keeps only the layers named in a config,
+and dissolves each feature's per-tile fragments into one coherent line by id **as
+it goes** — no intermediate. all dataset-specific knowledge (password, layer
+filter, attribute vocabulary, labelling, crs) lives in `config.toml`; the gas
+network is just one such config. the whole distribution (2.7 GB, 168k tiles) is
+processed in ~30 s.
 
 ```sh
 cargo build --release
-./target/release/mvf-extract MapsViewerApril2026.zip -o dist/cadent_gas_network.parquet
+./target/release/mvf-extract config.toml          # zip + output come from the config
 ```
 
-run it from the repo root: it reads `meta/NG.ADF` to tag network areas.
+run it from the repo root: paths in the config (`zip`, `output`, `area.file`)
+are relative to the working directory.
 
 ```
-options:
-  -o FILE       output geoparquet            (default dist/cadent_gas_network.parquet)
-  -p PASSWORD   zip password                 (default hard-coded)
+mvf-extract [CONFIG.toml] [ZIP] [options]
+  CONFIG.toml   extraction config            (default config.toml)
+  ZIP           tile archive                 (overrides config `zip`)
+  -o FILE       output geoparquet            (overrides config `output`)
+  -p PASSWORD   zip password                 (overrides config `password`)
   --square SK   only this 100 km square      (debug)
   --limit N     only the first N tiles       (debug)
   -j N          worker threads               (default: all cores)
 ```
+
+### the config
+
+`config.toml` drives the engine. the keys, with the cadent-gas values:
+
+| key | meaning |
+|---|---|
+| `zip` / `output` / `password` | archive, output geoparquet, aes password |
+| `square_index` | path segment giving the 100 km grid square (`DATA/GAS/NG/`**`NY`**`/…`) |
+| `crs` | projjson written into the geoparquet `geo` metadata |
+| `[aps]` | the webcgm vocabulary: `layer` / `feature` frame types and the `layer_attr` / `id_attr` / `spec_attr` attribute names, `id_null` values, `strip_layer_prefix` |
+| `[keep] layer_contains` | only features whose layer contains one of these survive |
+| `[tier]` | optional: cleaned layer → `(code, label)`, emitted as two columns |
+| `[spec]` | optional: a regex + material table parsing the spec string into `diameter_mm` / `material` / host columns |
+| `[area]` | optional: tag each grid tile with an area name from an `.adf`-style ini |
+
+drop `[tier]`, `[spec]` or `[area]` and the corresponding columns simply
+disappear from the output — point the binary at a different maps-viewer export by
+writing a new config.
 
 ## what's in the distribution
 

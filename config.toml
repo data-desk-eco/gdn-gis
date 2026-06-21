@@ -1,0 +1,56 @@
+# extraction config for the cadent / national-grid "maps viewer" distribution.
+#
+# mvf-extract is a generic extractor for obfuscated-webcgm (.mvf) tile
+# distributions; this file supplies everything specific to the gas-network data.
+# point it at another maps-viewer export by editing the values below.
+
+zip = "MapsViewerApril2026.zip"
+output = "dist/cadent_gas_network.parquet"
+password = "reply-Dy7bge"
+square_index = 3              # path segment giving the 100 km national-grid square
+
+# epsg:27700 (osgb36 / british national grid) as projjson for the geoparquet crs.
+crs = '''{"$schema":"https://proj.org/schemas/v0.7/projjson.schema.json","type":"ProjectedCRS","name":"OSGB36 / British National Grid","base_crs":{"name":"OSGB36","datum":{"type":"GeodeticReferenceFrame","name":"Ordnance Survey of Great Britain 1936","ellipsoid":{"name":"Airy 1830","semi_major_axis":6377563.396,"inverse_flattening":299.3249646}},"coordinate_system":{"subtype":"ellipsoidal","axis":[{"name":"Geodetic latitude","abbreviation":"Lat","direction":"north","unit":"degree"},{"name":"Geodetic longitude","abbreviation":"Lon","direction":"east","unit":"degree"}]},"id":{"authority":"EPSG","code":4277}},"conversion":{"name":"British National Grid","method":{"name":"Transverse Mercator","id":{"authority":"EPSG","code":9807}},"parameters":[{"name":"Latitude of natural origin","value":49,"unit":"degree","id":{"authority":"EPSG","code":8801}},{"name":"Longitude of natural origin","value":-2,"unit":"degree","id":{"authority":"EPSG","code":8802}},{"name":"Scale factor at natural origin","value":0.9996012717,"unit":"unity","id":{"authority":"EPSG","code":8805}},{"name":"False easting","value":400000,"unit":"metre","id":{"authority":"EPSG","code":8806}},{"name":"False northing","value":-100000,"unit":"metre","id":{"authority":"EPSG","code":8807}}]},"coordinate_system":{"subtype":"Cartesian","axis":[{"name":"Easting","abbreviation":"E","direction":"east","unit":"metre"},{"name":"Northing","abbreviation":"N","direction":"north","unit":"metre"}]},"id":{"authority":"EPSG","code":27700}}'''
+
+# webcgm application-structure vocabulary: the frame types and attribute names
+# the writer used. every polyline inherits the layer of its enclosing `layer`
+# aps and the id/spec of its enclosing `feature` aps.
+[aps]
+layer = "layer"
+feature = "grobject"
+layer_attr = "LayerName"
+id_attr = "Name"
+spec_attr = "ScreenTip"
+id_null = ["UNKNOWN"]         # id values that mean "no feature id"
+strip_layer_prefix = true     # strip the leading non-alpha draw-order sigil ($ ! #)
+
+# keep only features whose (cleaned) layer contains one of these — the gas
+# assets. the os background geography and annotation layers are dropped.
+[keep]
+layer_contains = ["Mains & Plant"]
+
+# cleaned layer name -> pressure tier; emitted as two columns.
+[tier]
+code_column = "pressure_code"
+label_column = "pressure"
+map = [
+  { match = "Low Pressure Mains & Plant",          code = "lp",  label = "low pressure" },
+  { match = "Medium Pressure Mains & Plant",       code = "mp",  label = "medium pressure" },
+  { match = "Intermediate Pressure Mains & Plant", code = "ip",  label = "intermediate pressure" },
+  { match = "Local High Pressure Mains & Plant",   code = "lhp", label = "local high pressure" },
+  { match = "National High Pressure Mains & Plant",code = "nhp", label = "national high pressure" },
+]
+
+# parse the screentip (e.g. `180MM PE (IN 8" CI)`) into diameter_mm + material,
+# plus the host main when a pe pipe has been inserted into a legacy iron/steel
+# one. named groups: d/u/m = bore/unit/material, hd/hu/hm = the host's.
+[spec]
+regex = '''^(?P<d>\d+(?:\.\d+)?)\s*(?P<u>MM|")?\s*(?P<m>[A-Z]{2})?(?:\s*\(IN\s*(?P<hd>\d+(?:\.\d+)?)\s*(?P<hu>MM|")?\s*(?P<hm>[A-Z]{2})?\s*\))?\s*$'''
+materials = { PE = "polyethylene", CI = "cast iron", SI = "spun iron", DI = "ductile iron", ST = "steel", PV = "pvc", AS = "asbestos cement", LE = "lead", UN = "unknown", NA = "not available" }
+
+# tag each feature's 10 km grid tile with a network area, from an .adf-style ini
+# (sections are area names, `Tile<n>=<tile>` entries list their tiles).
+[area]
+file = "meta/NG.ADF"
+column = "network_area"
+skip_section = "Areas"
