@@ -4,18 +4,25 @@ reverse-engineers the vector map data shipped inside the cadent / national grid
 **MAPS Viewer** windows distribution (`MapsViewerApril2026.zip`) and assembles it
 into a single distribution-ready geoparquet of the gas distribution network.
 
-two stages:
-
-1. **`extract_mvf.py`** — decode the 168,458 obfuscated `.mvf` tiles into one
-   geoparquet per 100 km square (`output/NG_<square>.parquet`), one row per
-   drawn line/polygon, carrying the per-feature webcgm attributes.
-2. **`build.py`** — keep the gas-asset features, stitch each pipe's per-tile
-   fragments into one coherent line, label them, attach metadata from the
-   distribution, and write **`dist/cadent_gas_network.parquet`**.
+a single rust pass (`extract.rs`) decodes the 168,458 obfuscated `.mvf` tiles,
+keeps only the gas-asset linework, and dissolves each pipe's per-tile fragments
+into one coherent line by os feature id **as it goes** — no intermediate. the
+whole distribution (2.7 GB, 168k tiles) is processed in ~30 s.
 
 ```sh
-uv run extract_mvf.py MapsViewerApril2026.zip -o output   # all 15 squares
-uv run build.py                                           # -> dist/
+cargo build --release
+./target/release/mvf-extract MapsViewerApril2026.zip -o dist/cadent_gas_network.parquet
+```
+
+run it from the repo root: it reads `meta/NG.ADF` to tag network areas.
+
+```
+options:
+  -o FILE       output geoparquet            (default dist/cadent_gas_network.parquet)
+  -p PASSWORD   zip password                 (default hard-coded)
+  --square SK   only this 100 km square      (debug)
+  --limit N     only the first N tiles       (debug)
+  -j N          worker threads               (default: all cores)
 ```
 
 ## what's in the distribution
@@ -48,18 +55,34 @@ each `.mvf` is an **obfuscated webcgm** (iso 8632 binary cgm) graphic:
 the zip is aes-256 encrypted; the password is passed with `-p` (default
 hard-coded).
 
+## how the extractor works
+
+one streaming pass, parallel over tiles (rayon, one cached zip archive per
+thread):
+
+1. decode each tile's header and picture body; walk the APS tree.
+2. **keep only the gas assets** — primitives whose enclosing layer is a
+   `... Mains & Plant` tier. the dense unattributed background linework (os
+   as-built geography) and the cartographic annotation layers (`Dimensions`,
+   `Notes`) never leave the parser.
+3. dissolve as we go: line fragments of a named pipe (os feature id) accumulate
+   into one bucket keyed by `(feature id, pressure tier)`, across tile *and*
+   100 km square boundaries; fragments with no id (mostly high-pressure plant)
+   are emitted individually.
+4. at the end, stitch each pipe's fragments end-to-end at degree-2 nodes (a
+   `ST_LineMerge`-alike), parse the `ScreenTip` into diameter / material /
+   insertion, tag the cadent network area from `NG.ADF`, and write the
+   geoparquet.
+
 ## the gas network dataset — `dist/cadent_gas_network.parquet`
 
 geoparquet 1.1, geometry in **epsg:27700** (osgb36 / british national grid).
-**2.25 million pipes, ~136,000 km of main.** the feature symbology is taken from
+**~2.25 million pipes, ~136,000 km of main.** the feature symbology is taken from
 the viewer's own key (`meta/chm/Symbol_Key_MAPSViewer.gif`).
 
 each row is one coherent pipe: the per-tile `POLYLINE` fragments of a single os
-feature (`Name`) are dissolved together with `ST_LineMerge`, across tile *and*
-100 km square boundaries. fragments with no id (mostly high-pressure plant) are
-kept individually. the dense unattributed background linework (os as-built
-geography) and the cartographic annotation layers (`Dimensions`, `Notes`) are
-dropped — they remain in the per-square `output/` files.
+feature (`Name`) are stitched together, across tile *and* 100 km square
+boundaries. fragments with no id are kept individually.
 
 | column | type | description |
 |---|---|---|
@@ -75,7 +98,7 @@ dropped — they remain in the per-square `output/` files.
 | `network_area` | string | cadent network: `NW` / `WM` / `EM` / `EA` / `NL` (from `NG.ADF`) |
 | `square` | string | 100 km national-grid square |
 | `tenk` | string | 10 km national-grid tile |
-| `length_m` | double | dissolved length in metres |
+| `length_m` | double | stitched length in metres |
 | `source` | string | provenance string from the tile header (`NG,GDFO,1.0.0`) |
 | `survey_date` | string | latest survey date (`yyyymmdd`) among the pipe's tiles |
 | `etype` | string | `LineString` / `MultiLineString` / `Polygon` |
@@ -85,14 +108,8 @@ dropped — they remain in the per-square `output/` files.
 
 | code | tier | pipes | km |
 |---|---|---:|---:|
-| lp | low pressure | 2,066,208 | 109,859 |
-| mp | medium pressure | 152,009 | 14,846 |
+| lp | low pressure | 2,066,087 | 109,857 |
+| mp | medium pressure | 152,022 | 14,848 |
+| nhp | national high pressure | 15,585 | 3,439 |
+| ip | intermediate pressure | 12,620 | 2,981 |
 | lhp | local high pressure | 7,166 | 4,762 |
-| nhp | national high pressure | 15,592 | 3,439 |
-| ip | intermediate pressure | 12,626 | 2,981 |
-
-## the per-square extract — `output/NG_<square>.parquet`
-
-every drawn primitive, including the os background and annotation. columns:
-`square`, `facet`, `source`, `survey_date`, `layer`, `name`, `screentip`,
-`etype`, `geometry` (wkb, epsg:27700). 111.5 million rows total.
