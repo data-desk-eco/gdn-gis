@@ -9,3 +9,5 @@ meta/*
 *.dll
 __pycache__/
 /target
+.claude/
+*.parquet

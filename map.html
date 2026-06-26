@@ -1,0 +1,126 @@
+<!doctype html><html lang=en><meta charset=utf8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Cadent gas mains — by material, MPDI highlighted</title>
+<style>
+html,body{margin:0;height:100%;background:#0b0b10;overflow:hidden;font:13px/1.4 system-ui,sans-serif;color:#cdd2dc}
+canvas{display:block;width:100vw;height:100vh;cursor:grab}canvas:active{cursor:grabbing}
+#hud{position:fixed;top:12px;left:14px;pointer-events:none;text-shadow:0 1px 3px #000}
+#hud b{font-size:15px;color:#fff}
+#leg{position:fixed;bottom:14px;left:14px;pointer-events:none;text-shadow:0 1px 3px #000}
+#bar{width:200px;height:9px;border-radius:5px;margin:3px 0;
+ background:linear-gradient(90deg,#2280b8,#9bd4a0,#f03b20)}
+#leg span{display:flex;justify-content:space-between;width:200px;opacity:.85}
+#leg .key{display:flex;align-items:center;gap:6px;margin-top:5px;opacity:.95}
+#leg .key i{width:14px;height:3px;border-radius:2px;display:inline-block}
+#msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}
+</style>
+<canvas id=c></canvas>
+<div id=hud><b>Cadent gas distribution mains</b></div>
+<div id=leg><div id=bar></div><span><i>polyethylene</i><i>cast iron</i></span>
+ <div class=key><i style="background:#ff2d9b"></i>medium-pressure ductile iron (mpdi)</div></div>
+<div id=msg>loading…</div>
+<script type=module>
+const cv=document.getElementById('c'),msg=document.getElementById('msg')
+const die=t=>{msg.textContent=t;throw t}
+if(!navigator.gpu)die('this browser has no webgpu')
+const dev=await(await navigator.gpu.requestAdapter())?.requestDevice()||die('no webgpu adapter')
+const ctx=cv.getContext('webgpu'),fmt=navigator.gpu.getPreferredCanvasFormat()
+ctx.configure({device:dev,format:fmt,alphaMode:'opaque'})
+
+const clamp=(v,a,b)=>v<a?a:v>b?b:v
+const D='dist/'                                       // artefacts live in the gitignored dist dir
+const meta=await(await fetch(D+'map.json')).json()    // grid + default view, written by src/map.rs
+const MINX=meta.minx,MINY=meta.miny,CELL=meta.cell,NCOLS=meta.ncols,NROWS=meta.nrows,N=NCOLS*NROWS
+const TH=meta.detail_scale,CAP=700                    // detail kicks in at scale ≥ TH; resident-cell cap
+let cx=meta.view.cx,cy=meta.view.cy,s=meta.view.s     // world is british national grid, kilometres
+
+const uni=dev.createBuffer({size:32,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST})
+const mod=dev.createShaderModule({code:`
+override PASS:f32=0.;                                  // 0 = material base layer, 1 = mpdi highlight on top
+struct V{ctr:vec4f,s:f32,k:f32};
+@group(0)@binding(0)var<uniform> v:V;
+struct O{@builtin(position)p:vec4f,@location(0)t:f32,@location(1)@interpolate(flat)f:f32};
+@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)seg:vec4f,@location(1)tone:f32,@location(2)flag:f32)->O{
+  if(PASS>.5 && flag<.5){return O(vec4f(2,2,0,1),tone,flag);}  // highlight pass: cull non-mpdi off-screen
+  let q=select(seg.xy,seg.zw,i==1u)-v.ctr.xy;
+  return O(vec4f(q.x*v.s*v.k,q.y*v.s,0,1),tone,flag);}
+@fragment fn fs(@location(0)t:f32,@location(1)@interpolate(flat)f:f32)->@location(0)vec4f{
+  if(PASS>.5){return vec4f(1.,.18,.61,1.);}            // mpdi highlight
+  if(t<0.){return vec4f(.30,.32,.38,.55);}             // unknown material
+  let nw=vec3f(.13,.5,.72);let md=vec3f(.61,.83,.63);let od=vec3f(.94,.23,.13);
+  let c=select(mix(md,od,(t-.5)*2),mix(nw,md,t*2),t<.5);
+  return vec4f(c,.82);}`})
+const bgl=dev.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.VERTEX,buffer:{}}]})
+const mkpipe=PASS=>dev.createRenderPipeline({layout:dev.createPipelineLayout({bindGroupLayouts:[bgl]}),
+  primitive:{topology:'line-list'},
+  vertex:{module:mod,entryPoint:'vs',constants:{PASS},buffers:[{arrayStride:24,stepMode:'instance',attributes:[
+    {shaderLocation:0,offset:0,format:'float32x4'},{shaderLocation:1,offset:16,format:'float32'},
+    {shaderLocation:2,offset:20,format:'float32'}]}]},
+  fragment:{module:mod,entryPoint:'fs',constants:{PASS},targets:[{format:fmt,blend:{
+    color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one'}}}]}})
+const pipe=mkpipe(0),pipeHL=mkpipe(1)
+const bg=dev.createBindGroup({layout:bgl,entries:[{binding:0,resource:{buffer:uni}}]})
+
+const mkbuf=ab=>{const b=dev.createBuffer({size:ab.byteLength,usage:GPUBufferUsage.VERTEX|GPUBufferUsage.COPY_DST})
+  dev.queue.writeBuffer(b,0,ab);return b}                          // ab: ArrayBuffer/typed view
+
+const dpr=Math.min(devicePixelRatio||1,2)
+const k=()=>cv.height/cv.width                        // metres are equal-aspect; correct for canvas ratio
+const resize=()=>{cv.width=innerWidth*dpr|0;cv.height=innerHeight*dpr|0;draw()}
+
+let baseVB=null,baseN=0                                // coarse skeleton, always drawn
+const cells=new Map()                                 // cell id → {vb,n,vis,t}
+let cnt=null,off=null,tick=0                           // per-cell counts + prefix-sum offsets
+function draw(){
+  dev.queue.writeBuffer(uni,0,new Float32Array([cx,cy,0,0,s,k()]))
+  const e=dev.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),
+    clearValue:{r:.043,g:.043,b:.063,a:1},loadOp:'clear',storeOp:'store'}]})
+  p.setBindGroup(0,bg)
+  for(const pl of [pipe,pipeHL]){                       // base layer, then mpdi highlights on top
+    p.setPipeline(pl)
+    if(baseN){p.setVertexBuffer(0,baseVB);p.draw(2,baseN)}
+    if(s>=TH)for(const o of cells.values())if(o.vis){p.setVertexBuffer(0,o.vb);p.draw(2,o.n)}}
+  p.end();dev.queue.submit([e.finish()])}
+
+const toWorld=(px,py)=>[cx+(px/cv.width*2-1)/(s*k()),cy+(1-py/cv.height*2)/s]
+function evict(){if(cells.size<=CAP)return
+  for(const[id,e]of[...cells].filter(([,e])=>!e.vis).sort((a,b)=>a[1].t-b[1].t)){
+    if(cells.size<=CAP)break;e.vb.destroy();cells.delete(id)}}
+async function update(){                               // pick visible cells, range-fetch the missing
+  for(const e of cells.values())e.vis=false
+  const need=[]
+  if(s>=TH){const kk=s*k()
+    const c0=clamp((cx-1/kk-MINX)/CELL|0,0,NCOLS-1),c1=clamp((cx+1/kk-MINX)/CELL|0,0,NCOLS-1)
+    const r0=clamp((cy-1/s-MINY)/CELL|0,0,NROWS-1),r1=clamp((cy+1/s-MINY)/CELL|0,0,NROWS-1)
+    if((c1-c0+1)*(r1-r0+1)<=1200)for(let r=r0;r<=r1;r++)for(let c=c0;c<=c1;c++){
+      const id=c+NCOLS*r;if(!cnt[id])continue
+      const e=cells.get(id);if(e){e.vis=1;e.t=tick++}else need.push(id)}}
+  draw()
+  if(!need.length)return evict()
+  need.sort((a,b)=>a-b)
+  const runs=[];for(const id of need){const r=runs.at(-1);if(r&&id===r.b+1)r.b=id;else runs.push({a:id,b:id})}
+  await Promise.all(runs.map(async run=>{
+    const ab=await(await fetch(D+'map.f32',{headers:{Range:`bytes=${off[run.a]*24}-${(off[run.b]+cnt[run.b])*24-1}`}})).arrayBuffer()
+    let p=0;for(let id=run.a;id<=run.b;id++){const len=cnt[id]*24
+      cells.set(id,{vb:mkbuf(new Uint8Array(ab,p,len)),n:cnt[id],vis:1,t:tick++});p+=len}}))
+  evict();draw()}
+
+let timer
+const sched=()=>{clearTimeout(timer);timer=setTimeout(update,110)}    // debounce fetches while moving
+cv.onwheel=ev=>{ev.preventDefault();const[wx,wy]=toWorld(ev.offsetX*dpr,ev.offsetY*dpr)
+  s=clamp(s*Math.exp(-ev.deltaY*.0015),meta.smin,meta.smax);const[nx,ny]=toWorld(ev.offsetX*dpr,ev.offsetY*dpr)
+  cx+=wx-nx;cy+=wy-ny;draw();sched()}
+let px,py
+cv.onpointerdown=e=>{px=e.offsetX*dpr;py=e.offsetY*dpr;cv.setPointerCapture(e.pointerId)}
+cv.onpointermove=e=>{if(px==null)return;const x=e.offsetX*dpr,y=e.offsetY*dpr
+  const[ax,ay]=toWorld(px,py),[bx,by]=toWorld(x,y);cx+=ax-bx;cy+=ay-by;px=x;py=y;draw();sched()}
+cv.onpointerup=()=>px=null
+addEventListener('resize',resize)
+
+resize()
+const idx=await(await fetch(D+'map.idx')).arrayBuffer()  // per-cell counts → prefix-sum offsets
+cnt=new Uint32Array(idx);off=new Uint32Array(N);let a=0;for(let i=0;i<N;i++){off[i]=a;a+=cnt[i]}
+baseVB=mkbuf(await(await fetch(D+'map.base.f32')).arrayBuffer());baseN=baseVB.size/24
+msg.remove();await update()
+</script>
+</html>

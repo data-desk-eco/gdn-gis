@@ -154,3 +154,36 @@ omits the entire high/intermediate-pressure tier (≈35 k features) we carry, an
 segments mains finely by asset id where we dissolve them into one line per os
 feature id (the cleaner topological form); its per-segment split is an artefact
 of tile/asset granularity, not reproducible from — nor preferable to — ours.
+
+## full-network gpu map
+
+`map.html` is a standalone, single-file full-screen webgpu map of the whole
+network — every pipe as a gpu line, coloured by the *live carrier* material
+(polyethylene→blue … cast iron→red; unknown→grey) with the killer class,
+medium-pressure ductile iron (mpdi), highlighted in magenta on top. because a
+sliplined main carries gas in its pe insert, lined iron correctly reads as pe and
+cools to blue — so the map shows true present-day material risk, not the historic
+iron footprint. no maplibre, no basemap, no dependencies: one webgpu shader (two
+override-constant pipelines — material base layer, then mpdi highlight) drawing
+instanced line segments, pan/zoom by a single uniform transform. opens on ipswich.
+
+it's *demand-paged* (level-of-detail): the extractor emits its artefacts as part of
+the same run whenever `config.toml` has a `[map]` section (`src/map.rs`), straight
+from the in-memory features in british national grid (metres → km, no reprojection):
+
+- `dist/map.f32` — every segment `x0 y0 x1 y1 tone flag` (le f32, km), binned into a
+  2 km grid and sorted by cell id so each cell is one contiguous byte-range.
+- `dist/map.idx` — a uint32 segment count per grid cell (180×180) the client
+  prefix-sums into byte offsets, http-range-fetching only the cells in view.
+- `dist/map.base.f32` — a coarse skeleton of the longer trunk mains (~370k segments),
+  hilbert-sorted, always resident, shown when zoomed out.
+- `dist/map.json` — grid + default view + zoom thresholds, so `map.html` hardcodes
+  no constants (change `[map]` and both ends stay in sync).
+
+webgpu needs http(s) and the per-cell fetches need http range, which the stdlib
+server ignores — so `serve.py` is a tiny range-capable static server.
+
+```sh
+cargo run --release            # extracts the network *and* writes dist/map.*
+python3 serve.py               # then open http://localhost:8000/map.html
+```

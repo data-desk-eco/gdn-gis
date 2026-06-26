@@ -54,3 +54,14 @@ materials = { PE = "polyethylene", CI = "cast iron", SI = "spun iron", DI = "duc
 file = "meta/NG.ADF"
 column = "network_area"
 skip_section = "Areas"
+
+# gpu-map artefacts (see src/map.rs). coords are british national grid in km; the
+# grid covers the whole cadent licence area (e 304–656, n 158–514 km). present =>
+# the extractor also writes dist/map.{f32,idx,base.f32,json} for map.html to serve.
+[map]
+dir = "dist"
+cell_km = 2.0
+origin = [300.0, 156.0]            # min easting, min northing (km)
+ncols = 180                        # 180 * 2 km = 360 km east  (to e 660)
+nrows = 180                        # 180 * 2 km = 360 km north (to n 516)
+view = [616.389, 244.655, 0.27]    # default view: ipswich centre + zoom (km, ndc/km)

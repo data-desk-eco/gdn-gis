@@ -30,6 +30,8 @@ use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 
+mod map; // gpu-map artefact generation (dist/map.f32 / .idx / .base.f32 / .json)
+
 // cgm class-4 graphical primitives we treat as geometry
 const POLYLINE: u8 = 1;
 const DISJOINT: u8 = 2;
@@ -63,11 +65,13 @@ struct Config {
     aps: Aps,
     keep: Keep,
     #[serde(default)]
-    tier: Option<Tier>,
+    pub(crate) tier: Option<Tier>,
     #[serde(default)]
-    spec: Option<Spec>,
+    pub(crate) spec: Option<Spec>,
     #[serde(default)]
     area: Option<Area>,
+    #[serde(default)]
+    map: Option<map::MapCfg>,
 }
 
 #[derive(Deserialize)]
@@ -92,21 +96,21 @@ struct Keep {
 struct Tier {
     code_column: String,
     label_column: String,
-    map: Vec<TierRow>,
+    pub(crate) map: Vec<TierRow>,
 }
 
 #[derive(Deserialize)]
 struct TierRow {
     #[serde(rename = "match")]
-    m: String,
-    code: String,
+    pub(crate) m: String,
+    pub(crate) code: String,
     label: String,
 }
 
 #[derive(Deserialize)]
 struct Spec {
-    regex: String,
-    materials: HashMap<String, String>,
+    pub(crate) regex: String,
+    pub(crate) materials: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -269,7 +273,7 @@ fn pts(par: &[u8], x0: f64, y0: f64, sx: f64, sy: f64) -> Vec<(f64, f64)> {
 
 // ------------------------------------------------------------------ geometry
 
-enum Geom {
+pub(crate) enum Geom {
     Line(Vec<(f64, f64)>),
     Multi(Vec<Vec<(f64, f64)>>),
     Poly(Vec<(f64, f64)>),
@@ -421,15 +425,15 @@ struct Bucket {
 }
 
 /// one output feature: a dissolved named pipe or an as-is unnamed primitive.
-struct Row {
+pub(crate) struct Row {
     fid: Option<String>,
-    layer: String,
-    tip: Option<String>,
+    pub(crate) layer: String,
+    pub(crate) tip: Option<String>,
     square: String,
     facet: String,
     src: Option<String>,
     date: Option<String>,
-    geom: Geom,
+    pub(crate) geom: Geom,
 }
 
 thread_local! {
@@ -654,7 +658,7 @@ fn merge(mut a: Bucket, b: Bucket) -> Bucket {
 
 // ----------------------------------------------------------------- labelling
 
-fn dia_mm(d: Option<&str>, u: Option<&str>) -> Option<f64> {
+pub(crate) fn dia_mm(d: Option<&str>, u: Option<&str>) -> Option<f64> {
     let v: f64 = d?.parse().ok()?;
     match u {
         Some("\"") => Some((v * 25.4 * 10.0).round() / 10.0),
@@ -665,7 +669,7 @@ fn dia_mm(d: Option<&str>, u: Option<&str>) -> Option<f64> {
 }
 
 /// screentip -> (diameter_mm, material, host_diameter_mm, host_material)
-fn parse_tip<'a>(
+pub(crate) fn parse_tip<'a>(
     t: Option<&str>,
     re: &regex::Regex,
     mats: &'a HashMap<String, String>,
@@ -833,10 +837,13 @@ fn main() {
         geom: u.geom,
     }));
 
-    write_parquet(rows, &cfg, &out, t0);
+    write_parquet(&rows, &cfg, &out, t0);
+    if let Some(m) = &cfg.map {
+        map::write(&rows, &cfg, m);
+    }
 }
 
-fn write_parquet(rows: Vec<Row>, cfg: &Config, out: &str, t0: Instant) {
+fn write_parquet(rows: &[Row], cfg: &Config, out: &str, t0: Instant) {
     let area = cfg.area.as_ref().map(areas);
     let spec_re = cfg.spec.as_ref().map(|s| regex::Regex::new(&s.regex).unwrap());
     let tier_idx: HashMap<&str, (&str, &str)> = cfg
@@ -861,7 +868,7 @@ fn write_parquet(rows: Vec<Row>, cfg: &Config, out: &str, t0: Instant) {
     let empty_mats = HashMap::new();
     let mats = cfg.spec.as_ref().map(|s| &s.materials).unwrap_or(&empty_mats);
 
-    for r in &rows {
+    for r in rows {
         let g = &r.geom;
         let t = tenk(&r.facet);
         let l = (length(g) * 100.0).round() / 100.0;
