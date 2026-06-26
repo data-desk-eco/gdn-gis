@@ -1,9 +1,6 @@
-data/MapsViewerApril2026.zip
-data/output/
+data/
 dist/
-data/sample/
 extract.log
-data/meta/*
 !data/meta/NG.ADF
 *.DLL
 *.dll
