@@ -198,6 +198,10 @@ fn body_score(d: &[u8], s: usize, cmds: u32) -> (u32, u32, u32) {
             Some(c) => c,
             None => break,
         };
+        if qe - qs > 8192 && cl != 4 {
+            break; // a multi-kb non-polyline command means we are desynced (real long
+                   // commands are class-4 polylines; the desync tell is a giant class-7 span)
+        }
         if cl == 4 && (eid == POLYLINE || eid == DISJOINT || eid == POLYGON) {
             nprim += 1;
             let par = &d[qs..qe];
@@ -217,24 +221,61 @@ fn body_score(d: &[u8], s: usize, cmds: u32) -> (u32, u32, u32) {
     (nprim, tot, ok)
 }
 
-/// offset of the first plausible plain-cgm picture-body command (after header).
-/// the in-range ratio (random header garbage scores ~0.33) is the discriminator.
-/// two tiers: a strict dense-geometry pass first, so big tiles skip past any
-/// obfuscated-header bytes that coincidentally parse as a stray primitive; then a
-/// lenient pass that rescues sparse tiles (a single short main, little background)
-/// the strict floor would drop. the lenient pass only runs when the strict pass
-/// finds nothing, and is harmless on truly empty tiles — parse_tile keeps only
-/// primitives inside a matching layer aps, so a wrong offset yields no features.
-fn find_start(d: &[u8], db: &[u8]) -> Option<usize> {
+/// is `s` a genuinely command-aligned body offset? walk the whole tile and require
+/// it to reach a real application-structure frame — an APS_BEGIN whose type is the
+/// config's `layer` or `feature` keyword — without first hitting a multi-kb command
+/// (the tell of a desync). this is the decisive check: read as plain cgm, a handful
+/// of obfuscated-header bytes just before the true body decode as a short in-range
+/// primitive run, so a points-only score accepts an offset a few bytes early; that
+/// shadow framing can even coast to a clean end, but it never spells the exact ascii
+/// frame keywords. matching one proves true alignment; garbage cannot fake it.
+fn aligned(d: &[u8], s: usize, a: &Aps) -> bool {
+    let mut p = s;
+    let mut n = 0u32;
+    while let Some((cl, eid, qs, qe, np)) = read_cmd(d, p) {
+        if qe - qs > 8192 && cl != 4 {
+            return false; // a multi-kb non-polyline command means we are desynced
+        }
+        if cl == 0 && eid == APS_BEGIN {
+            let r = runs(&d[qs..qe]);
+            if r.len() > 1 {
+                let t = latin1(r[1]);
+                if t == a.layer || t == a.feature {
+                    return true;
+                }
+            }
+        }
+        if cl == 0 && (eid == END_PIC || eid == END_META) {
+            return false; // picture ended before any real frame => a misframed start
+        }
+        p = np;
+        n += 1;
+        if n > 300_000 {
+            return false;
+        }
+    }
+    false
+}
+
+/// offset of the plain-cgm picture body (after the obfuscated header). the
+/// obfuscated/plain boundary is not a fixed structural marker, so it is found by
+/// scanning: the earliest offset whose next commands are in-range geometry (random
+/// header bytes read as plain cgm score ~0.33 in range) **and** which is genuinely
+/// command-aligned (`aligned`). the alignment check is essential — a points-only test
+/// accepts a false positive a few bytes before the true start, where stray header
+/// bytes decode as an in-range primitive run, and that silently swallows or drops the
+/// whole tile. two tiers: a strict dense pass, then a lenient one for sparse
+/// single-pipe tiles. tiles whose only gas token is an empty layer label keep nothing.
+fn find_start(d: &[u8], db: &[u8], a: &Aps) -> Option<usize> {
     let lo = find(db, b"Ymax").map(|j| j + 12).unwrap_or(380);
     let hi = (lo + 4000).min(d.len());
-    let scan = |cmds, min_prim, min_pts| {
+    let scan = |min_prim, min_pts| {
         (lo..hi).step_by(2).find(|&s| {
-            let (nprim, tot, ok) = body_score(d, s, cmds);
-            nprim >= min_prim && tot >= min_pts && (ok as f64) / (tot as f64) > 0.95
+            let (nprim, tot, ok) = body_score(d, s, 64);
+            nprim >= min_prim && tot >= min_pts && ok as f64 > 0.95 * tot as f64 && aligned(d, s, a)
         })
     };
-    scan(25, 2, 20).or_else(|| scan(40, 1, 2))
+    scan(2, 20).or_else(|| scan(1, 2))
 }
 
 /// runs of >=2 printable ascii bytes.
@@ -466,6 +507,12 @@ fn parse_tile(idx: usize, name: &str, b: &mut Bucket, cfg: &Config) -> usize {
             return 0;
         }
     };
+    // a tile keeps nothing unless a kept layer's name appears (as plain ascii) in its
+    // body — so skip the ~half of tiles that carry only os background/annotation. this
+    // is both a large speed-up and what lets find_start's alignment check stay strict.
+    if !cfg.keep.layer_contains.iter().any(|k| find(&d, k.as_bytes()).is_some()) {
+        return 0;
+    }
     let db = deob(&d);
     static META: OnceLock<Regex> = OnceLock::new();
     let re = META.get_or_init(|| Regex::new(r#""(\w+):([^"]*)""#).unwrap());
@@ -483,7 +530,7 @@ fn parse_tile(idx: usize, name: &str, b: &mut Bucket, cfg: &Config) -> usize {
     };
     let (vw, vh) = vdc_extent(&db);
     let (sx, sy) = ((x1 - x0) / vw as f64, (y1 - y0) / vh as f64);
-    let start = match find_start(&d, &db) {
+    let start = match find_start(&d, &db, &cfg.aps) {
         Some(s) => s,
         None => {
             FAIL_START.fetch_add(1, Relaxed);

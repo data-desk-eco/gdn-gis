@@ -87,9 +87,12 @@ thread):
 
 1. decode each tile's header and locate where the plain-cgm picture body begins
    (the obfuscated/plain boundary isn't a fixed structural marker, so it's found
-   by scanning for in-range geometry — a strict dense-body pass, then a lenient
-   pass that rescues tiny single-pipe tiles a dense floor would drop); walk the
-   APS tree.
+   by scanning for the earliest offset whose commands are in-range geometry *and*
+   that is genuinely command-aligned — it reaches a real `layer`/`grobject` frame
+   before the picture ends, without a desync. a points-only test is not enough: a
+   few obfuscated-header bytes just before the true body decode as a stray in-range
+   primitive run, so an offset a hair too early passes it but then drifts and drops
+   — or silently swallows — the tile); walk the APS tree.
 2. **keep only the gas assets** — primitives whose enclosing layer is a
    `... Mains & Plant` tier. the dense unattributed background linework (os
    as-built geography) and the cartographic annotation layers (`Dimensions`,
@@ -106,7 +109,7 @@ thread):
 ## the gas network dataset — `dist/cadent_gas_network.parquet`
 
 geoparquet 1.1, geometry in **epsg:27700** (osgb36 / british national grid).
-**~2.25 million pipes, ~136,000 km of main.** the feature symbology is taken from
+**~2.31 million pipes, ~140,000 km of main.** the feature symbology is taken from
 the viewer's own key (`data/meta/chm/Symbol_Key_MAPSViewer.gif`).
 
 each row is one coherent pipe: the per-tile `POLYLINE` fragments of a single os
@@ -137,19 +140,23 @@ boundaries. fragments with no id are kept individually.
 
 | code | tier | pipes | km |
 |---|---|---:|---:|
-| lp | low pressure | 2,066,142 | 109,860 |
-| mp | medium pressure | 152,007 | 14,847 |
-| nhp | national high pressure | 15,765 | 3,479 |
-| ip | intermediate pressure | 12,620 | 2,981 |
-| lhp | local high pressure | 7,166 | 4,764 |
+| lp | low pressure | 2,112,518 | 112,909 |
+| mp | medium pressure | 156,690 | 15,359 |
+| nhp | national high pressure | 16,464 | 3,637 |
+| ip | intermediate pressure | 12,832 | 3,063 |
+| lhp | local high pressure | 7,359 | 4,958 |
 
 ### completeness vs cadent's open data
 
 cross-checked against cadent's own *gas pipe infrastructure (gpi)* open-data
 geoparquet (≈2.27 m features, lp/mp only). after aligning the two on a 50 m grid
-the linework agrees to ~98 %: each side carries ~1.5–2 % the other lacks, a
-near-symmetric difference that is **vintage** — the open extract is newer than
-this april-2026 viewer snapshot — not missing extraction. note the open file
+the linework agrees closely: our lp+mp count (≈2.27 m) now matches the open
+extract's, and what each side still lacks is **vintage** — the open extract is
+newer than this april-2026 viewer snapshot — not missing extraction. (an earlier
+revision of the picture-body finder silently dropped ~4,000 km — whole 1 km tiles
+left as square holes — wherever the body started a few bytes past where its
+points-only heuristic guessed; the alignment-validated finder recovers them.)
+note the open file
 omits the entire high/intermediate-pressure tier (≈35 k features) we carry, and
 segments mains finely by asset id where we dissolve them into one line per os
 feature id (the cleaner topological form); its per-segment split is an artefact
