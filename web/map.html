@@ -28,7 +28,7 @@ const ctx=cv.getContext('webgpu'),fmt=navigator.gpu.getPreferredCanvasFormat()
 ctx.configure({device:dev,format:fmt,alphaMode:'opaque'})
 
 const clamp=(v,a,b)=>v<a?a:v>b?b:v
-const D='dist/'                                       // artefacts live in the gitignored dist dir
+const D='../dist/'                                       // artefacts live in the gitignored dist dir
 const meta=await(await fetch(D+'map.json')).json()    // grid + default view, written by src/map.rs
 const MINX=meta.minx,MINY=meta.miny,CELL=meta.cell,NCOLS=meta.ncols,NROWS=meta.nrows,N=NCOLS*NROWS
 const TH=meta.detail_scale,CAP=700                    // detail kicks in at scale ≥ TH; resident-cell cap

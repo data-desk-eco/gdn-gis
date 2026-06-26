@@ -1,10 +1,10 @@
-MapsViewerApril2026.zip
-output/
+data/MapsViewerApril2026.zip
+data/output/
 dist/
-sample/
+data/sample/
 extract.log
-meta/*
-!meta/NG.ADF
+data/meta/*
+!data/meta/NG.ADF
 *.DLL
 *.dll
 __pycache__/

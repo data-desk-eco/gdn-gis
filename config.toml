@@ -4,7 +4,7 @@
 # distributions; this file supplies everything specific to the gas-network data.
 # point it at another maps-viewer export by editing the values below.
 
-zip = "MapsViewerApril2026.zip"
+zip = "data/MapsViewerApril2026.zip"
 output = "dist/cadent_gas_network.parquet"
 password = "reply-Dy7bge"
 square_index = 3              # path segment giving the 100 km national-grid square
@@ -51,7 +51,7 @@ materials = { PE = "polyethylene", CI = "cast iron", SI = "spun iron", DI = "duc
 # tag each feature's 10 km grid tile with a network area, from an .adf-style ini
 # (sections are area names, `Tile<n>=<tile>` entries list their tiles).
 [area]
-file = "meta/NG.ADF"
+file = "data/meta/NG.ADF"
 column = "network_area"
 skip_section = "Areas"
 

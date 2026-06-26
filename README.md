@@ -1,7 +1,7 @@
 # cadent gas distribution network — geospatial extraction
 
 reverse-engineers the vector map data shipped inside the cadent / national grid
-**MAPS Viewer** windows distribution (`MapsViewerApril2026.zip`) and assembles it
+**MAPS Viewer** windows distribution (`data/MapsViewerApril2026.zip`) and assembles it
 into a single distribution-ready geoparquet of the gas distribution network.
 
 `src/main.rs` is a **generic extractor for obfuscated-webcgm (`.mvf`) tile
@@ -107,7 +107,7 @@ thread):
 
 geoparquet 1.1, geometry in **epsg:27700** (osgb36 / british national grid).
 **~2.25 million pipes, ~136,000 km of main.** the feature symbology is taken from
-the viewer's own key (`meta/chm/Symbol_Key_MAPSViewer.gif`).
+the viewer's own key (`data/meta/chm/Symbol_Key_MAPSViewer.gif`).
 
 each row is one coherent pipe: the per-tile `POLYLINE` fragments of a single os
 feature (`Name`) are stitched together, across tile *and* 100 km square
@@ -157,7 +157,7 @@ of tile/asset granularity, not reproducible from — nor preferable to — ours.
 
 ## full-network gpu map
 
-`map.html` is a standalone, single-file full-screen webgpu map of the whole
+`web/map.html` is a standalone, single-file full-screen webgpu map of the whole
 network — every pipe as a gpu line, coloured by the *live carrier* material
 (polyethylene→blue … cast iron→red; unknown→grey) with the killer class,
 medium-pressure ductile iron (mpdi), highlighted in magenta on top. because a
@@ -177,13 +177,13 @@ from the in-memory features in british national grid (metres → km, no reprojec
   prefix-sums into byte offsets, http-range-fetching only the cells in view.
 - `dist/map.base.f32` — a coarse skeleton of the longer trunk mains (~370k segments),
   hilbert-sorted, always resident, shown when zoomed out.
-- `dist/map.json` — grid + default view + zoom thresholds, so `map.html` hardcodes
+- `dist/map.json` — grid + default view + zoom thresholds, so `web/map.html` hardcodes
   no constants (change `[map]` and both ends stay in sync).
 
 webgpu needs http(s) and the per-cell fetches need http range, which the stdlib
-server ignores — so `serve.py` is a tiny range-capable static server.
+server ignores — so `scripts/serve.py` is a tiny range-capable static server.
 
 ```sh
 cargo run --release            # extracts the network *and* writes dist/map.*
-python3 serve.py               # then open http://localhost:8000/map.html
+python3 scripts/serve.py               # then open http://localhost:8000/web/map.html
 ```

@@ -38,5 +38,5 @@ class S(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
 
 port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-print(f"serving {os.getcwd()} on http://localhost:{port}/map.html  (Range-capable)")
+print(f"serving {os.getcwd()} on http://localhost:{port}/web/map.html  (Range-capable)")
 S(('', port), H).serve_forever()
