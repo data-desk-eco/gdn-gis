@@ -1,20 +1,26 @@
 <!doctype html><html lang=en><meta charset=utf8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>UK gas network</title>
+<title>UK gas network</title><link rel=icon href=data:,>
 <style>
 html,body{margin:0;height:100%;background:#0b0b10;overflow:hidden;font:13px/1.4 system-ui,sans-serif;color:#cdd2dc}
-canvas{display:block;width:100vw;height:100vh;cursor:grab}canvas:active{cursor:grabbing}
+canvas{display:block;width:100vw;height:100vh;cursor:grab;touch-action:none}canvas:active{cursor:grabbing}
 #hud{position:fixed;top:12px;left:14px;pointer-events:none;text-shadow:0 1px 3px #000}
 #hud b{font-size:15px;color:#fff}
+#hud small{opacity:.55}
 #leg{position:fixed;bottom:14px;left:14px;pointer-events:none;text-shadow:0 1px 3px #000}
 #leg .grid{display:grid;grid-template-columns:auto auto;gap:1px 16px}
 #leg .key{display:flex;align-items:center;gap:6px;opacity:.95}
 #leg .key i{width:14px;height:3px;border-radius:2px;flex:none}
 #leg .key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #fff}
+#tl{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;
+ background:#14141ccc;border:1px solid #ffffff22;border-radius:8px;padding:6px 12px;backdrop-filter:blur(4px)}
+#tl button{all:unset;cursor:pointer;width:16px;text-align:center;color:#fff}
+#tl input{width:min(34vw,300px);accent-color:#4e93d0}
+#tl span{font-variant-numeric:tabular-nums;width:34px;color:#fff}
 #msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}
 </style>
 <canvas id=c></canvas>
-<div id=hud><b>UK gas network</b></div>
+<div id=hud><b>UK gas network</b><br><small>drag pan · right-drag / two-finger twist orbit · scroll zoom</small></div>
 <div id=leg>
  <div class=grid>
   <div class=key><i style="background:#ef4b3d"></i>cast iron</div>
@@ -28,8 +34,10 @@ canvas{display:block;width:100vw;height:100vh;cursor:grab}canvas:active{cursor:g
   <div class=key><i style="background:#4e93d0"></i>polyethylene</div>
   <div class=key><i style="background:#4d5261"></i>unknown</div>
   <div class=key><i class=dot></i>emergency</div>
+  <div class=key><i class=dot style="border-color:#8b8f99"></i>urgent</div>
  </div>
 </div>
+<div id=tl><button id=play>⏸</button><input id=yrs type=range><span id=ylab></span></div>
 <div id=msg>loading…</div>
 <script type=module>
 const cv=document.getElementById('c'),msg=document.getElementById('msg'),leg=document.getElementById('leg')
@@ -40,84 +48,254 @@ const ctx=cv.getContext('webgpu'),fmt=navigator.gpu.getPreferredCanvasFormat()
 ctx.configure({device:dev,format:fmt,alphaMode:'opaque'})
 
 const clamp=(v,a,b)=>v<a?a:v>b?b:v
-const D='../dist/'                                       // artefacts live in the gitignored dist dir
-const meta=await(await fetch(D+'map.json')).json()    // grid + default view, written by src/map.rs
+const D='../dist/'                                    // artefacts live in the gitignored dist dir
+const meta=await(await fetch(D+'map.json')).json()    // grid + view + thresholds, written by src/map.rs
 const MINX=meta.minx,MINY=meta.miny,CELL=meta.cell,NCOLS=meta.ncols,NROWS=meta.nrows,N=NCOLS*NROWS
-const TH=meta.detail_scale,CAP=700                    // detail kicks in at scale ≥ TH; resident-cell cap
-let cx=meta.view.cx,cy=meta.view.cy,s=meta.view.s     // world is british national grid, kilometres
+const TH=meta.detail_scale,BTH=meta.bldg_scale,YB=meta.yr0
+const T0N=meta.t0.n,T0S=meta.t0.step,T1P=meta.t1.p,T1B=T1P*T1P*2   // terrain post grids
+const FOV=50*Math.PI/180,TAN=Math.tan(FOV/2)
 
-let sel=-1                                             // picked incident index (-1 = none)
-const uni=dev.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST})
-const UNI=`struct V{ctr:vec4f,s:f32,k:f32,r:vec2f,sel:f32,tip:vec4f};
-@group(0)@binding(0)var<uniform> v:V;`
-const mod=dev.createShaderModule({code:UNI+`
+// ─── orbit camera: target on the ground (bng km), dist, azimuth, pitch off vertical.
+// far out the pitch clamp holds it top-down and the map behaves like the old 2d one;
+// past the detail threshold the clamp opens and the wheel dollies to the cursor.
+const cam={t:[meta.view.cx,meta.view.cy],dist:1/(meta.view.s*TAN),az:0,pitch:0}
+const S=()=>1/(cam.dist*TAN)                          // ndc-per-km equivalent of the old zoom scale
+const maxPitch=()=>1.38*clamp(2*S()/TH-.6,0,1)
+const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],norm=a=>{const l=Math.hypot(...a);return[a[0]/l,a[1]/l,a[2]/l]}
+const mmul=(a,b)=>{const o=new Float32Array(16)
+  for(let c=0;c<4;c++)for(let r=0;r<4;r++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+r]*b[c*4+k];o[c*4+r]=s}return o}
+const eye=()=>{const h=cam.dist*Math.sin(cam.pitch),ez=hgtCPU(cam.t[0],cam.t[1])
+  return[cam.t[0]+h*Math.sin(cam.az),cam.t[1]-h*Math.cos(cam.az),ez+cam.dist*Math.cos(cam.pitch)]}
+// roll-free up for any pitch (up=[0,0,1] degenerates exactly at top-down)
+const up=()=>{const cp=Math.cos(cam.pitch),sp=Math.sin(cam.pitch)
+  return[-Math.sin(cam.az)*cp,Math.cos(cam.az)*cp,sp]}
+// the camera basis every consumer shares — one place for the ground-height reference
+const basis=()=>{const e=eye(),ez=hgtCPU(cam.t[0],cam.t[1])
+  const z=norm(sub(e,[cam.t[0],cam.t[1],ez])),x=norm(cross(up(),z))
+  return{e,ez,x,y:cross(z,x),z}}
+const vpMat=()=>{const asp=cv.width/cv.height,n=cam.dist*.02,f=cam.dist*40+900,t=1/TAN
+  const{e,x,y,z}=basis()
+  const look=new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,e),-dot(y,e),-dot(z,e),1])
+  return mmul(new Float32Array([t/asp,0,0,0,0,t,0,0,0,0,f/(n-f),-1,0,0,f*n/(n-f),0]),look)}
+// world x/y where the cursor ray (canvas px) meets the target-height ground plane
+const toWorld=(px,py)=>{const asp=cv.width/cv.height,{e,ez,x,y,z}=basis()
+  const nx=px/cv.width*2-1,ny=1-py/cv.height*2
+  const d=[nx*TAN*asp*x[0]+ny*TAN*y[0]-z[0],nx*TAN*asp*x[1]+ny*TAN*y[1]-z[1],nx*TAN*asp*x[2]+ny*TAN*y[2]-z[2]]
+  const s=d[2]<-1e-4?(ez-e[2])/d[2]:6*cam.dist                    // above horizon → clamp far
+  return[e[0]+Math.min(s,6*cam.dist)*d[0],e[1]+Math.min(s,6*cam.dist)*d[1]]}
+
+// ─── shaders: one module, everything shares the uniform + terrain samplers.
+// heights are u16 decimetres+1000 (fens sit below sea level); hgt() prefers a
+// resident lidar cell (texture array via the cell→layer lut) over the coarse grid.
+const EXAG=1.5                                         // vertical exaggeration, shader + cpu mirror
+const uni=dev.createBuffer({size:128,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST})
+const lutBuf=dev.createBuffer({size:N*4,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST})
+const visBuf=dev.createBuffer({size:4096,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST})
+const T1L=224                                          // lidar texture-array layers (lru pool)
+const t0Tex=dev.createTexture({size:[T0N,T0N],format:'r16uint',usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST})
+const t1Tex=dev.createTexture({size:[T1P,T1P,T1L],format:'r16uint',usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST})
+const WG=`
+struct V{vp:mat4x4f,ms:vec4f,tip:vec4f,tw:vec4f,tw2:vec4f};
+@group(0)@binding(0)var<uniform> v:V;
+@group(0)@binding(1)var t0:texture_2d<u32>;
+@group(0)@binding(2)var t1:texture_2d_array<u32>;
+@group(0)@binding(3)var<storage> lut:array<i32>;
+@group(0)@binding(4)var<storage> vis:array<u32>;
+const MINX=${MINX}.0; const MINY=${MINY}.0; const CELL=${CELL}.0; const NC=${NCOLS}u; const EX=${EXAG};
+fn dm2km(e:f32)->f32{return (e-1000.)*EX*1e-4;}
+fn hgt(p:vec2f)->f32{                                  // terrain height (km, exaggerated) at bng km
+  let c=(p-vec2f(MINX,MINY))/CELL;
+  let ci=vec2u(clamp(vec2i(floor(c)),vec2i(0),vec2i(${NCOLS-1},${NROWS-1})));
+  let l=lut[ci.x+NC*ci.y];
+  if(l>=0){
+    let f=clamp((c-vec2f(ci))*${T1P-1}.,vec2f(0.),vec2f(${T1P-1}.-1e-3));
+    let i=vec2u(f); let r=f-vec2f(i); let ly=u32(l);
+    let a=mix(f32(textureLoad(t1,i,ly,0).r),f32(textureLoad(t1,i+vec2u(1,0),ly,0).r),r.x);
+    let b=mix(f32(textureLoad(t1,i+vec2u(0,1),ly,0).r),f32(textureLoad(t1,i+vec2u(1,1),ly,0).r),r.x);
+    return dm2km(mix(a,b,r.y));}
+  let g=clamp((p-vec2f(MINX,MINY))/${T0S},vec2f(0.),vec2f(${T0N-1}.-1e-3));
+  let i=vec2u(g); let r=g-vec2f(i);
+  let a=mix(f32(textureLoad(t0,i,0).r),f32(textureLoad(t0,i+vec2u(1,0),0).r),r.x);
+  let b=mix(f32(textureLoad(t0,i+vec2u(0,1),0).r),f32(textureLoad(t0,i+vec2u(1,1),0).r),r.x);
+  return dm2km(mix(a,b,r.y));}
+fn world(cell:u32,q:vec2u)->vec2f{                     // u16 cell-local record coords → bng km
+  return vec2f(MINX,MINY)+vec2f(f32(cell%NC),f32(cell/NC))*CELL+vec2f(q)*(CELL/65535.);}
+const OFF=vec4f(2e9,0.,0.,1.);`
+const mod=dev.createShaderModule({code:WG+`
 override PASS:f32=0.;                                  // 0 = material base layer, 1 = mpdi highlight on top
-struct O{@builtin(position)p:vec4f,@location(0)t:f32,@location(1)@interpolate(flat)f:f32};
-@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)seg:vec4f,@location(1)tone:f32,@location(2)flag:f32)->O{
-  if(PASS>.5 && flag<.5){return O(vec4f(2,2,0,1),tone,flag);}  // highlight pass: cull non-mpdi off-screen
-  let q=select(seg.xy,seg.zw,i==1u)-v.ctr.xy;
-  return O(vec4f(q.x*v.s*v.k,q.y*v.s,0,1),tone,flag);}
-@fragment fn fs(@location(0)t:f32,@location(1)@interpolate(flat)f:f32)->@location(0)vec4f{
+struct O{@builtin(position)p:vec4f,@location(0)@interpolate(flat)t:u32};
+@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->O{
+  let tone=m.y&0xffu; let yr=m.y>>8u;
+  if((PASS>.5&&(tone&0x80u)==0u)||(yr>0u&&f32(yr)+${YB}.>v.ms.w)){return O(OFF,0u);}
+  let p=world(m.x,select(q.xy,q.zw,i==1u));
+  return O(v.vp*vec4f(p,hgt(p)+.002,1.),tone);}
+@fragment fn fs(@location(0)@interpolate(flat)t:u32)->@location(0)vec4f{
   if(PASS>.5){return vec4f(1.,.18,.61,1.);}            // mpdi highlight
-  if(t<0.){return vec4f(.30,.32,.38,.55);}             // unknown material
+  let tone=t&0x7fu;
+  if(tone>7u){return vec4f(.30,.32,.38,.55);}          // unknown material
   var pal=array<vec3f,8>(                              // categorical, risk-ordered; mirrors map.rs MATS + legend
     vec3f(.937,.294,.239),vec3f(.949,.557,.169),vec3f(.690,.478,.631),vec3f(.612,.459,.373),
     vec3f(.929,.788,.282),vec3f(.463,.718,.698),vec3f(.349,.631,.310),vec3f(.306,.576,.816));
-  return vec4f(pal[u32(t+.5)],.82);}`})
-// street-manager incident circles: fixed screen-size instanced hollow rings
-const wmod=dev.createShaderModule({code:UNI+`
-struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32};
-@vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f)->O{
+  return vec4f(pal[tone],.82);}`})
+// osm building wireframes: the 12 B edge record is the instance; 6 verts emit
+// base pair, roof pair, riser — z draped on the terrain sample.
+const bmod=dev.createShaderModule({code:WG+`
+@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->@builtin(position)vec4f{
+  let p=world(m.x,select(q.xy,q.zw,i==1u||i==3u));
+  let z=hgt(p)+select(f32(m.y>>8u),f32(m.y&0xffu),i>=2u&&i!=4u)*5e-4;   // half-metres → km
+  return v.vp*vec4f(p,z,1.);}
+@fragment fn fs()->@location(0)vec4f{return vec4f(.42,.47,.55,.34);}`})
+// street-manager incident circles: fixed screen-size instanced hollow rings, draped
+const wmod=dev.createShaderModule({code:WG+`
+struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32};
+@vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f,@location(1)df:vec2f)->O{
+  if(df.x>0.&&1970.+df.x/365.2425>v.ms.w){return O(OFF,vec2f(0.),0.,0.);}
   var cn=array<vec2f,4>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(1,1));
-  let q=cn[i];let hot=select(0.,1.,f32(inst)==v.sel);
-  let c=pt-v.ctr.xy;let r=v.r*select(1.,1.8,hot>.5);
-  return O(vec4f(c.x*v.s*v.k+q.x*r.x,c.y*v.s+q.y*r.y,0,1),q,hot);}
-@fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32)->@location(0)vec4f{
+  let q=cn[i];let hot=select(0.,1.,f32(inst)==v.ms.z);
+  let c=v.vp*vec4f(pt,hgt(pt)+.004,1.);let r=v.ms.xy*select(1.,1.8,hot>.5);
+  return O(vec4f(c.x+q.x*r.x*c.w,c.y+q.y*r.y*c.w,c.z,c.w),q,hot,df.y);}
+@fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32)->@location(0)vec4f{
   let a=smoothstep(.13,.07,abs(length(q)-.89));        // hollow ring, ~1px border
   if(a<.01){discard;}
-  return vec4f(select(vec3f(1.),vec3f(.29,.84,1.),hot>.5),a*.95);}`})
+  let base=select(vec3f(.55,.58,.64),vec3f(1.),em>.5); // emergency white, urgent grey
+  return vec4f(select(base,vec3f(.29,.84,1.),hot>.5),a*.95);}`})
+// terrain wire: fully procedural line grids over the height textures — no vertex
+// buffers. COARSE=1 walks a strided rect of the national grid (tw = i0,j0,st,nw;
+// tw2.x = nh); COARSE=0 walks each visible lidar cell (vis[]; tw2 = nh,dst,lpc,pitch).
+const tmod=dev.createShaderModule({code:WG+`
+override COARSE:f32=1.;
+@vertex fn vs(@builtin(vertex_index)vi:u32,@builtin(instance_index)li:u32)->@builtin(position)vec4f{
+  let k=vi>>1u; let odd=vi&1u;
+  if(COARSE>.5){
+    let st=v.tw.z; let nw=u32(v.tw.w); let nh=u32(v.tw2.x);
+    var g:vec2f;
+    if(li<nh){ if(k+odd>=nw){return OFF;} g=v.tw.xy+st*vec2f(f32(k+odd),f32(li)); }
+    else     { if(k+odd>=nh){return OFF;} g=v.tw.xy+st*vec2f(f32(li-nh),f32(k+odd)); }
+    if(g.x>${T0N-1}.||g.y>${T0N-1}.){return OFF;}
+    let gi=vec2u(clamp(g,vec2f(0.),vec2f(${T0N-1}.)));
+    let p=vec2f(MINX,MINY)+vec2f(gi)*${T0S};
+    return v.vp*vec4f(p,dm2km(f32(textureLoad(t0,gi,0).r)),1.);}
+  let dst=v.tw2.y; let lpc=u32(v.tw2.z); let cell=vis[li/(2u*lpc)]; let ln=li%(2u*lpc);
+  let l=lut[cell]; if(l<0){return OFF;}
+  let a=min(dst*f32(k+odd),${T1P-1}.); let b=min(dst*f32(ln%lpc),${T1P-1}.);
+  if(dst*f32(k)>=${T1P-1}.){return OFF;}
+  var g:vec2f; if(ln<lpc){g=vec2f(a,b);}else{g=vec2f(b,a);}
+  let gi=vec2u(g);
+  let p=vec2f(MINX,MINY)+(vec2f(f32(cell%NC),f32(cell/NC))+vec2f(gi)/${T1P-1}.)*CELL;
+  return v.vp*vec4f(p,dm2km(f32(textureLoad(t1,gi,u32(l),0).r)),1.);}
+@fragment fn fs()->@location(0)vec4f{
+  return vec4f(.30,.42,.50,.12+.26*smoothstep(.02,.5,v.tw2.w));}`})
 // tooltip: 2d-canvas text uploaded as a texture, drawn just above the legend
-const tmod=dev.createShaderModule({code:UNI+`
+const pmod=dev.createShaderModule({code:WG+`
 @group(1)@binding(0)var ts:sampler;@group(1)@binding(1)var tt:texture_2d<f32>;
 struct O{@builtin(position)p:vec4f,@location(0)uv:vec2f};
 @vertex fn vs(@builtin(vertex_index)i:u32)->O{
   var cn=array<vec2f,4>(vec2f(0,0),vec2f(1,0),vec2f(0,1),vec2f(1,1));let c=cn[i];
   return O(vec4f(mix(v.tip.xy,v.tip.zw,c),0,1),vec2f(c.x,1.-c.y));}
 @fragment fn fs(@location(0)uv:vec2f)->@location(0)vec4f{return textureSample(tt,ts,uv);}`})
-const bgl=dev.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT,buffer:{}}]})
+
+const bgl=dev.createBindGroupLayout({entries:[
+ {binding:0,visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT,buffer:{}},
+ {binding:1,visibility:GPUShaderStage.VERTEX,texture:{sampleType:'uint'}},
+ {binding:2,visibility:GPUShaderStage.VERTEX,texture:{sampleType:'uint',viewDimension:'2d-array'}},
+ {binding:3,visibility:GPUShaderStage.VERTEX,buffer:{type:'read-only-storage'}},
+ {binding:4,visibility:GPUShaderStage.VERTEX,buffer:{type:'read-only-storage'}}]})
 const bglT=dev.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},
   {binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{}}]})
 const blend={color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}}
 const layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]})
-const mkpipe=PASS=>dev.createRenderPipeline({layout,
-  primitive:{topology:'line-list'},
-  vertex:{module:mod,entryPoint:'vs',constants:{PASS},buffers:[{arrayStride:24,stepMode:'instance',attributes:[
-    {shaderLocation:0,offset:0,format:'float32x4'},{shaderLocation:1,offset:16,format:'float32'},
-    {shaderLocation:2,offset:20,format:'float32'}]}]},
-  fragment:{module:mod,entryPoint:'fs',constants:{PASS},targets:[{format:fmt,blend}]}})
-const pipe=mkpipe(0),pipeHL=mkpipe(1)
-const wpipe=dev.createRenderPipeline({layout,
-  primitive:{topology:'triangle-strip'},
+const V12=[{arrayStride:12,stepMode:'instance',attributes:[                     // the shared 12 B record
+  {shaderLocation:0,offset:0,format:'uint16x4'},{shaderLocation:1,offset:8,format:'uint16x2'}]}]
+const line={topology:'line-list'}
+const mk=(m,c,bufs)=>dev.createRenderPipeline({layout,primitive:line,
+  vertex:{module:m,entryPoint:'vs',constants:c,buffers:bufs},
+  fragment:{module:m,entryPoint:'fs',constants:c,targets:[{format:fmt,blend}]}})
+const pipe=mk(mod,{PASS:0},V12),pipeHL=mk(mod,{PASS:1},V12),bpipe=mk(bmod,undefined,V12)
+const twire=mk(tmod,{COARSE:1}),dwire=mk(tmod,{COARSE:0})
+const wpipe=dev.createRenderPipeline({layout,primitive:{topology:'triangle-strip'},
   vertex:{module:wmod,entryPoint:'vs',buffers:[{arrayStride:16,stepMode:'instance',attributes:[
-    {shaderLocation:0,offset:0,format:'float32x2'}]}]},
+    {shaderLocation:0,offset:0,format:'float32x2'},{shaderLocation:1,offset:8,format:'float32x2'}]}]},
   fragment:{module:wmod,entryPoint:'fs',targets:[{format:fmt,blend}]}})
-const tpipe=dev.createRenderPipeline({layout:dev.createPipelineLayout({bindGroupLayouts:[bgl,bglT]}),
-  primitive:{topology:'triangle-strip'},vertex:{module:tmod,entryPoint:'vs'},
-  fragment:{module:tmod,entryPoint:'fs',targets:[{format:fmt,blend}]}})
-const bg=dev.createBindGroup({layout:bgl,entries:[{binding:0,resource:{buffer:uni}}]})
+const ppipe=dev.createRenderPipeline({layout:dev.createPipelineLayout({bindGroupLayouts:[bgl,bglT]}),
+  primitive:{topology:'triangle-strip'},vertex:{module:pmod,entryPoint:'vs'},
+  fragment:{module:pmod,entryPoint:'fs',targets:[{format:fmt,blend}]}})
+const bg=dev.createBindGroup({layout:bgl,entries:[{binding:0,resource:{buffer:uni}},
+ {binding:1,resource:t0Tex.createView()},{binding:2,resource:t1Tex.createView()},
+ {binding:3,resource:{buffer:lutBuf}},{binding:4,resource:{buffer:visBuf}}]})
 
-const mkbuf=ab=>{const b=dev.createBuffer({size:ab.byteLength,usage:GPUBufferUsage.VERTEX|GPUBufferUsage.COPY_DST})
-  dev.queue.writeBuffer(b,0,ab);return b}                          // ab: ArrayBuffer/typed view
+const mkbuf=ab=>{const b=dev.createBuffer({size:Math.max(12,ab.byteLength),usage:GPUBufferUsage.VERTEX|GPUBufferUsage.COPY_DST})
+  dev.queue.writeBuffer(b,0,ab);return b}
 
+// ─── layers: every heavy layer is (blob, idx) against the same grid — one paging
+// path, one lru per layer. terrain cells upload into the texture-array pool.
+const layers={}
+const mklayer=(id,blob,cnt,bytes,cap,gate,load,evict)=>{const off=new Uint32Array(N)
+  let a=0;for(let i=0;i<N;i++){off[i]=a;a+=cnt[i]}
+  layers[id]={blob,cnt,off,bytes,cap,gate,load,evict,cells:new Map()}}
+let tick=0
+async function page(L){
+  for(const e of L.cells.values())e.vis=false
+  const need=[]
+  if(S()>=L.gate){const[c0,c1,r0,r1]=rect()
+    if((c1-c0+1)*(r1-r0+1)<=1200)for(let r=r0;r<=r1;r++)for(let c=c0;c<=c1;c++){
+      const id=c+NCOLS*r;if(!L.cnt[id])continue
+      const e=L.cells.get(id);if(e){e.vis=1;e.t=tick++;L.re?.(id,e)}else need.push(id)}}
+  if(!need.length)return evict(L)
+  need.sort((a,b)=>a-b)
+  for(const id of need)L.cells.set(id,{vis:1,t:tick++})     // placeholder: no refetch while in flight
+  const runs=[];for(const id of need){const r=runs.at(-1);if(r&&id===r.b+1)r.b=id;else runs.push({a:id,b:id})}
+  await Promise.all(runs.map(async run=>{
+    try{
+      const o=L.off[run.a]*L.bytes,e=(L.off[run.b]+L.cnt[run.b])*L.bytes
+      const r=await fetch(D+L.blob,{headers:{Range:`bytes=${o}-${e-1}`}})
+      if(r.status!==206)throw'no range support'               // a 200 would slice the wrong bytes
+      const ab=await r.arrayBuffer()
+      let p=0;for(let id=run.a;id<=run.b;id++){const len=L.cnt[id]*L.bytes
+        const old=L.cells.get(id)
+        L.cells.set(id,{...L.load(id,new Uint8Array(ab,p,len)),vis:old?.vis??1,t:tick++});p+=len}
+    }catch(e){for(let id=run.a;id<=run.b;id++)if(!L.cells.get(id)?.vb&&!L.cells.get(id)?.cpu)L.cells.delete(id)}}))
+  evict(L);draw()}
+function evict(L){if(L.cells.size<=L.cap)return
+  for(const[id,e]of[...L.cells].filter(([,e])=>!e.vis).sort((a,b)=>a[1].t-b[1].t)){
+    if(L.cells.size<=L.cap)break;L.evict?.(id,e);e.vb?.destroy();L.cells.delete(id)}}
+
+// terrain lidar cells: cpu copy kept for picking/pan heights, gpu copy in the pool
+const lut=new Int32Array(N).fill(-1)
+const freeL=[...Array(T1L).keys()]
+let t0cpu=null
+const hgtCPU=(x,y)=>{                                  // mirrors hgt(); metres → km handled by caller
+  const c=layers.terr?.cells.get(clamp((x-MINX)/CELL|0,0,NCOLS-1)+NCOLS*clamp((y-MINY)/CELL|0,0,NROWS-1))
+  let g,W,gx,gy
+  if(c?.cpu){g=c.cpu;W=T1P
+    gx=clamp(((x-MINX)/CELL%1)*(T1P-1),0,T1P-1.001);gy=clamp(((y-MINY)/CELL%1)*(T1P-1),0,T1P-1.001)}
+  else{if(!t0cpu)return 0;g=t0cpu;W=T0N
+    gx=clamp((x-MINX)/T0S,0,T0N-1.001);gy=clamp((y-MINY)/T0S,0,T0N-1.001)}
+  const x0=gx|0,y0=gy|0,dx=gx-x0,dy=gy-y0
+  const v=(i,j)=>g[Math.min(y0+j,W-1)*W+Math.min(x0+i,W-1)]
+  return ((v(0,0)*(1-dx)+v(1,0)*dx)*(1-dy)+(v(0,1)*(1-dx)+v(1,1)*dx)*dy-1000)*EXAG*1e-4}
+
+// ─── timeline: the laid-year clock. autoplays 20 s on load, scrubbable, ends steady.
+const yrs=document.getElementById('yrs'),ylab=document.getElementById('ylab'),play=document.getElementById('play')
+const[Y0,Y1]=meta.yr;let yr=Y0,playing=true
+yrs.min=Y0;yrs.max=Y1+1;yrs.step=.1;yrs.value=Y0
+const setYr=v=>{yr=v;yrs.value=v;ylab.textContent=Math.min(v|0,Y1);draw()}
+yrs.oninput=()=>{playing=false;play.textContent='▶';setYr(+yrs.value)}
+play.onclick=()=>{playing=!playing;play.textContent=playing?'⏸':'▶'
+  if(playing){if(yr>Y1)yr=Y0;pt0=0;requestAnimationFrame(anim)}}
+let pt0=0
+function anim(t){if(!playing)return
+  if(pt0)setYr(Math.min(yr+(t-pt0)/2e4*(Y1+1-Y0),Y1+1));pt0=t
+  if(yr>Y1){playing=false;play.textContent='▶';return}
+  requestAnimationFrame(anim)}
+
+let sel=-1                                             // picked incident index (-1 = none)
+let wkVB=null,wkN=0,wk=null,det=null
 const dpr=Math.min(devicePixelRatio||1,2)
-const k=()=>cv.height/cv.width                        // metres are equal-aspect; correct for canvas ratio
-const RPX=4.5*dpr                                     // incident circle radius, px
-const resize=()=>{cv.width=innerWidth*dpr|0;cv.height=innerHeight*dpr|0;draw()}
+const RPX=4.5*dpr
+const resize=()=>{cv.width=innerWidth*dpr|0;cv.height=innerHeight*dpr|0;draw();sched?.()}
+let baseVB=null,baseN=0
 
-let baseVB=null,baseN=0                                // coarse skeleton, always drawn
-let wkVB=null,wkN=0,wk=null,det=null                   // incident points + lazy detail lines
-const cells=new Map()                                 // cell id → {vb,n,vis,t}
-let cnt=null,off=null,tick=0                           // per-cell counts + prefix-sum offsets
 const tc=document.createElement('canvas'),tg=tc.getContext('2d')
 const samp=dev.createSampler({magFilter:'linear',minFilter:'linear'})
 let tipTex=null,tipBG=null,tipW=0,tipH=0
@@ -136,78 +314,164 @@ function tip(lines){                                   // text → texture; null
     dev.queue.copyExternalImageToTexture({source:tc},{texture:tipTex},[tipW,tipH])
     tipBG=dev.createBindGroup({layout:bglT,entries:[{binding:0,resource:samp},{binding:1,resource:tipTex.createView()}]})}
   draw()}
+
+// visible cell rect from the frustum's ground footprint (corners → ground), kept
+// within ±16 cells of the target so a pitched horizon can't blow the cell budget —
+// distant ground falls back to the resident base + coarse relief anyway
+function rect(){const pts=[[0,0],[cv.width,0],[0,cv.height],[cv.width,cv.height]].map(p=>toWorld(p[0],p[1]))
+  const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1])
+  const tc=(cam.t[0]-MINX)/CELL|0,tr=(cam.t[1]-MINY)/CELL|0,R=16
+  return[clamp((Math.min(...xs)-MINX)/CELL|0,Math.max(0,tc-R),NCOLS-1),clamp((Math.max(...xs)-MINX)/CELL|0,0,Math.min(NCOLS-1,tc+R)),
+         clamp((Math.min(...ys)-MINY)/CELL|0,Math.max(0,tr-R),NROWS-1),clamp((Math.max(...ys)-MINY)/CELL|0,0,Math.min(NROWS-1,tr+R))]}
+
 function draw(){
+  const s=S(),vp=vpMat()
   let t=[0,0,0,0]                                      // tooltip quad in ndc, anchored above the legend
   if(tipTex){const x=14*dpr,y=(leg.getBoundingClientRect().top-8)*dpr
     t=[x/cv.width*2-1,1-y/cv.height*2,(x+tipW)/cv.width*2-1,1-(y-tipH)/cv.height*2]}
-  dev.queue.writeBuffer(uni,0,new Float32Array([cx,cy,0,0,s,k(),RPX*2/cv.width,RPX*2/cv.height,sel,0,0,0,...t]))
+  // coarse wire rect: strided posts over the ground footprint, ~14 px spacing
+  const wire=cam.pitch>.02,[c0,c1,r0,r1]=rect()
+  const st=Math.max(1,Math.ceil(14/(T0S*s*cv.height/2)))
+  const i0=c0*CELL/T0S,j0=r0*CELL/T0S
+  const nw=Math.min(500,Math.ceil(((c1-c0+1)*CELL/T0S)/st)+1),nh=Math.min(500,Math.ceil(((r1-r0+1)*CELL/T0S)/st)+1)
+  // detail wire: visible lidar cells + per-cell stride for ~10 px spacing
+  const dvis=[]
+  if(s>=TH&&layers.terr)for(const[id,e]of layers.terr.cells)if(e.vis&&lut[id]>=0&&dvis.length<1024)dvis.push(id)
+  const cellpx=CELL*s*cv.height/2
+  const dst=Math.max(1,Math.ceil((T1P-1)/(cellpx/10)))
+  const lpc=Math.floor((T1P-1)/dst)+1
+  if(dvis.length)dev.queue.writeBuffer(visBuf,0,new Uint32Array(dvis))
+  dev.queue.writeBuffer(uni,0,new Float32Array([...vp,
+    RPX*2/cv.width,RPX*2/cv.height,sel,yr>Y1?9e3:yr, ...t, i0,j0,st,nw, nh,dst,lpc,cam.pitch]))
   const e=dev.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),
     clearValue:{r:.043,g:.043,b:.063,a:1},loadOp:'clear',storeOp:'store'}]})
   p.setBindGroup(0,bg)
-  for(const pl of [pipe,pipeHL]){                       // base layer, then mpdi highlights on top
+  if(wire){p.setPipeline(twire);p.draw(2*Math.max(nw,nh),nw+nh)}
+  if(dvis.length&&(wire||s>=TH)){p.setPipeline(dwire);p.draw(2*Math.ceil((T1P-1)/dst),dvis.length*2*lpc)}
+  const B=layers.bldg
+  if(B&&s>=BTH){p.setPipeline(bpipe)
+    for(const o of B.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(6,o.n)}}
+  const P=layers.pipe
+  for(const pl of[pipe,pipeHL]){                       // base layer, then mpdi highlights on top
     p.setPipeline(pl)
     if(baseN){p.setVertexBuffer(0,baseVB);p.draw(2,baseN)}
-    if(s>=TH)for(const o of cells.values())if(o.vis){p.setVertexBuffer(0,o.vb);p.draw(2,o.n)}}
+    if(P&&s>=TH)for(const o of P.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(2,o.n)}}
   if(wkN&&s>=TH){p.setPipeline(wpipe);p.setVertexBuffer(0,wkVB);p.draw(4,wkN)}  // incidents on top
-  if(tipTex){p.setPipeline(tpipe);p.setBindGroup(1,tipBG);p.draw(4)}
+  if(tipTex){p.setPipeline(ppipe);p.setBindGroup(1,tipBG);p.draw(4)}
   p.end();dev.queue.submit([e.finish()])}
 
-const toWorld=(px,py)=>[cx+(px/cv.width*2-1)/(s*k()),cy+(1-py/cv.height*2)/s]
-function evict(){if(cells.size<=CAP)return
-  for(const[id,e]of[...cells].filter(([,e])=>!e.vis).sort((a,b)=>a[1].t-b[1].t)){
-    if(cells.size<=CAP)break;e.vb.destroy();cells.delete(id)}}
-async function update(){                               // pick visible cells, range-fetch the missing
-  for(const e of cells.values())e.vis=false
-  const need=[]
-  if(s>=TH){const kk=s*k()
-    const c0=clamp((cx-1/kk-MINX)/CELL|0,0,NCOLS-1),c1=clamp((cx+1/kk-MINX)/CELL|0,0,NCOLS-1)
-    const r0=clamp((cy-1/s-MINY)/CELL|0,0,NROWS-1),r1=clamp((cy+1/s-MINY)/CELL|0,0,NROWS-1)
-    if((c1-c0+1)*(r1-r0+1)<=1200)for(let r=r0;r<=r1;r++)for(let c=c0;c<=c1;c++){
-      const id=c+NCOLS*r;if(!cnt[id])continue
-      const e=cells.get(id);if(e){e.vis=1;e.t=tick++}else need.push(id)}}
-  draw()
-  if(!need.length)return evict()
-  need.sort((a,b)=>a-b)
-  const runs=[];for(const id of need){const r=runs.at(-1);if(r&&id===r.b+1)r.b=id;else runs.push({a:id,b:id})}
-  await Promise.all(runs.map(async run=>{
-    const ab=await(await fetch(D+'map.f32',{headers:{Range:`bytes=${off[run.a]*24}-${(off[run.b]+cnt[run.b])*24-1}`}})).arrayBuffer()
-    let p=0;for(let id=run.a;id<=run.b;id++){const len=cnt[id]*24
-      cells.set(id,{vb:mkbuf(new Uint8Array(ab,p,len)),n:cnt[id],vis:1,t:tick++});p+=len}}))
-  evict();draw()}
+// page() marks resident-cell visibility synchronously (fetches await later), so
+// draw after the marking pass — re-entered cached cells appear without a fetch
+const update=()=>{const ps=Object.values(layers).map(page);draw();return Promise.all(ps)}
 
-async function pick(x,y){                              // nearest incident within ~9 px → tooltip
-  if(!wkN||s<TH)return
-  const[wx,wy]=toWorld(x,y),tx=9*dpr*2/(cv.width*s*k()),ty=9*dpr*2/(cv.height*s)
-  let bd=1;sel=-1
-  for(let i=0;i<wkN;i++){const dx=(wk[i*4]-wx)/tx,dy=(wk[i*4+1]-wy)/ty,d=dx*dx+dy*dy
-    if(d<bd){bd=d;sel=i}}
-  if(sel<0)return tip(null)
-  det??=(await(await fetch(D+'works.tsv')).text()).split('\n')  // lazy, once; row i ↔ point i
-  const[permit,cat,status,street,town,auth,start,end]=det[sel].split('\t')
-  tip([`${street||'(no street)'}${town?', '+town:''}`,`${cat} · ${status.toLowerCase()}`,
-    start+(end&&end!==start?' → '+end:''),`${auth.toLowerCase()} · permit ${permit}`])}
+// project world → canvas px through the current vp (cpu, for picking)
+const proj=(vp,x,y,z)=>{const w=vp[3]*x+vp[7]*y+vp[11]*z+vp[15];if(w<=0)return null
+  return[(vp[0]*x+vp[4]*y+vp[8]*z+vp[12])/w*.5*cv.width+cv.width/2,
+         cv.height/2-(vp[1]*x+vp[5]*y+vp[9]*z+vp[13])/w*.5*cv.height]}
+const tofsCache=new Map()
+async function pick(x,y){                              // incidents first, then named buildings
+  if(S()<TH)return
+  const vp=vpMat();let bd=9*dpr
+  // cheap world-space cull before the projection: the frustum footprint + margin
+  const fp=[[0,0],[cv.width,0],[0,cv.height],[cv.width,cv.height]].map(p=>toWorld(p[0],p[1]))
+  const bx0=Math.min(...fp.map(p=>p[0]))-.1,bx1=Math.max(...fp.map(p=>p[0]))+.1
+  const by0=Math.min(...fp.map(p=>p[1]))-.1,by1=Math.max(...fp.map(p=>p[1]))+.1
+  sel=-1
+  if(wk)for(let i=0;i<wkN;i++){
+    const wx=wk[i*4],wy=wk[i*4+1]
+    if(wx<bx0||wx>bx1||wy<by0||wy>by1)continue
+    const yv=wk[i*4+2]>0?1970+wk[i*4+2]/365.2425:0
+    if(yv>yr&&yr<=Y1)continue
+    const p=proj(vp,wx,wy,hgtCPU(wx,wy)+.004);if(!p)continue
+    const d=Math.hypot(p[0]-x,p[1]-y);if(d<bd){bd=d;sel=i}}
+  if(sel>=0){
+    det??=(await(await fetch(D+'works.tsv')).text()).split('\n')  // lazy, once; row i ↔ point i
+    const[permit,cat,status,street,town,auth,start,end]=det[sel].split('\t')
+    return tip([`${street||'(no street)'}${town?', '+town:''}`,`${cat} · ${status.toLowerCase()}`,
+      start+(end&&end!==start?' → '+end:''),`${auth.toLowerCase()} · permit ${permit}`])}
+  if(tofs&&S()>=BTH){                                  // building names: lazy per-cell tsv ranges
+    const[wx,wy]=toWorld(x,y)
+    const c=clamp((wx-MINX)/CELL|0,0,NCOLS-1)+NCOLS*clamp((wy-MINY)/CELL|0,0,NROWS-1)
+    if(tofs[c+1]>tofs[c]){
+      if(!tofsCache.has(c))tofsCache.set(c,(await(await fetch(D+'bldg.tsv',
+        {headers:{Range:`bytes=${tofs[c]}-${tofs[c+1]-1}`}})).text()).split('\n'))
+      let bn=null;bd=14*dpr
+      for(const row of tofsCache.get(c)){const[bx,by,name]=row.split('\t');if(!name)continue
+        const p=proj(vp,+bx,+by,hgtCPU(+bx,+by));if(!p)continue
+        const d=Math.hypot(p[0]-x,p[1]-y);if(d<bd){bd=d;bn=name}}
+      if(bn)return tip([bn])}}
+  tip(null)}
 
+// ─── controls: left-drag pans the ground, right/shift-drag orbits, wheel dollies
+// to the cursor; touch: one finger pans, two pinch-zoom · twist-orbit · drag tilt.
 let timer
 const sched=()=>{clearTimeout(timer);timer=setTimeout(update,110)}    // debounce fetches while moving
-cv.onwheel=ev=>{ev.preventDefault();const[wx,wy]=toWorld(ev.offsetX*dpr,ev.offsetY*dpr)
-  s=clamp(s*Math.exp(-ev.deltaY*.003),meta.smin,meta.smax);const[nx,ny]=toWorld(ev.offsetX*dpr,ev.offsetY*dpr)
-  cx+=wx-nx;cy+=wy-ny;draw();sched()}
-let px,py,mv
-cv.onpointerdown=e=>{px=e.offsetX*dpr;py=e.offsetY*dpr;mv=0;try{cv.setPointerCapture(e.pointerId)}catch{}}
-cv.onpointermove=e=>{if(px==null)return;const x=e.offsetX*dpr,y=e.offsetY*dpr
-  mv+=Math.abs(x-px)+Math.abs(y-py)
-  const[ax,ay]=toWorld(px,py),[bx,by]=toWorld(x,y);cx+=ax-bx;cy+=ay-by;px=x;py=y;draw();sched()}
-cv.onpointerup=e=>{if(px!=null&&mv<4*dpr)pick(e.offsetX*dpr,e.offsetY*dpr);px=null}
+const dmin=1/(meta.smax*TAN),dmax=1/(meta.smin*TAN)
+const dolly=(f,px,py)=>{f=clamp(cam.dist*f,dmin,dmax)/cam.dist
+  const g=toWorld(px,py)
+  cam.t[0]+=(1-f)*(g[0]-cam.t[0]);cam.t[1]+=(1-f)*(g[1]-cam.t[1]);cam.dist*=f
+  cam.pitch=Math.min(cam.pitch,maxPitch())}
+cv.oncontextmenu=e=>e.preventDefault()
+const pts=new Map();let px=0,py=0,btn=-1,pd=0,pa=0,pmy=0,mv=0
+const two=()=>{const[a,b]=[...pts.values()]
+  return{d:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),
+    a:Math.atan2(b.clientY-a.clientY,b.clientX-a.clientX),
+    mx:(a.clientX+b.clientX)/2,my:(a.clientY+b.clientY)/2}}
+cv.onpointerdown=e=>{pts.set(e.pointerId,e);try{cv.setPointerCapture(e.pointerId)}catch{}
+  btn=e.shiftKey?2:e.button;px=e.clientX;py=e.clientY;mv=0
+  if(pts.size===2){const t=two();pd=t.d;pa=t.a;pmy=t.my}}
+cv.onpointerup=cv.onpointercancel=e=>{pts.delete(e.pointerId)
+  if(e.type==='pointerup'&&!pts.size&&mv<4)pick(e.clientX*dpr,e.clientY*dpr)
+  const r=[...pts.values()][0];if(r){px=r.clientX;py=r.clientY;btn=0}else btn=-1}
+cv.onpointermove=e=>{
+  if(!pts.has(e.pointerId))return;pts.set(e.pointerId,e)
+  if(pts.size>=2){const t=two()
+    dolly(pd/t.d,t.mx*dpr,t.my*dpr)
+    cam.az+=t.a-pa
+    cam.pitch=clamp(cam.pitch-(t.my-pmy)*.004,0,maxPitch())
+    pd=t.d;pa=t.a;pmy=t.my;mv=9;draw();sched();return}
+  if(btn<0)return;const dx=e.clientX-px,dy=e.clientY-py;px=e.clientX;py=e.clientY;mv+=Math.abs(dx)+Math.abs(dy)
+  if(btn===0){const kpp=2*cam.dist*TAN/(cv.height/dpr),a=cam.az
+    cam.t[0]-=(Math.cos(a)*dx+Math.sin(a)*dy)*kpp
+    cam.t[1]-=(Math.sin(a)*dx-Math.cos(a)*dy)*kpp}
+  else{cam.az-=dx*.004;cam.pitch=clamp(cam.pitch-dy*.004,0,maxPitch())}
+  draw();sched()}
+cv.onwheel=e=>{e.preventDefault();dolly(Math.exp(e.deltaY*.003),e.offsetX*dpr,e.offsetY*dpr);draw();sched()}
 addEventListener('resize',resize)
 
+// ─── boot: idx files + residents in parallel; paged layers register as they land
+const get=f=>fetch(D+f).then(r=>r.ok?r.arrayBuffer():null).catch(()=>null)
+let tofs=null
 resize()
-const idx=await(await fetch(D+'map.idx')).arrayBuffer()  // per-cell counts → prefix-sum offsets
-cnt=new Uint32Array(idx);off=new Uint32Array(N);let a=0;for(let i=0;i<N;i++){off[i]=a;a+=cnt[i]}
-baseVB=mkbuf(await(await fetch(D+'map.base.f32')).arrayBuffer());baseN=baseVB.size/24
-fetch(D+'works.f32').then(r=>r.ok?r.arrayBuffer():null).then(ab=>{     // incidents are optional
-  if(ab){wk=new Float32Array(ab);wkVB=mkbuf(ab);wkN=wk.length/4;draw()}})
+const[pidx,baseAB,t0AB,t1idx,bidx,btofs,wkAB]=await Promise.all([
+  get('map.idx'),get('map.base.bin'),get('terr0.bin'),get('terr1.idx'),
+  get('bldg.idx'),get('bldg.tofs'),get('works.f32')])
+if(!pidx||!baseAB)die('map artefacts missing — run the extractor')
+const vbload=(id,bytes)=>({vb:mkbuf(bytes),n:bytes.byteLength/12})
+mklayer('pipe','map.bin',new Uint32Array(pidx),12,700,TH,vbload)
+baseVB=mkbuf(baseAB);baseN=baseAB.byteLength/12
+if(t0AB){t0cpu=new Uint16Array(t0AB)
+  dev.queue.writeTexture({texture:t0Tex},t0AB,{bytesPerRow:T0N*2},[T0N,T0N])}
+if(t1idx){const bits=new Uint8Array(t1idx),cnt=new Uint8Array(N)
+  for(let i=0;i<N;i++)cnt[i]=(bits[i>>3]>>(i&7))&1
+  const toL=(id,cpu)=>{const l=freeL.pop()                       // texture-array slot from the pool
+    if(l==null)return null
+    dev.queue.writeTexture({texture:t1Tex,origin:[0,0,l]},cpu,{bytesPerRow:T1P*2},[T1P,T1P,1])
+    lut[id]=l;dev.queue.writeBuffer(lutBuf,id*4,lut,id,1);return l}
+  mklayer('terr','terr1.bin',cnt,T1B,T1L-8,TH,(id,bytes)=>{
+    const cpu=new Uint16Array(bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+T1B))
+    return{cpu,l:toL(id,cpu)}},
+    (id,e)=>{if(e.l!=null){freeL.push(e.l);lut[id]=-1;dev.queue.writeBuffer(lutBuf,id*4,lut,id,1)}})
+  layers.terr.re=(id,e)=>{if(e.cpu&&e.l==null)e.l=toL(id,e.cpu)} // pool freed up → claim a slot
+}
+if(bidx&&btofs){tofs=new Uint32Array(btofs)
+  mklayer('bldg','bldg.bin',new Uint32Array(bidx),12,250,BTH,vbload)}
+if(wkAB){wk=new Float32Array(wkAB);wkVB=mkbuf(wkAB);wkN=wk.length/4}
+dev.queue.writeBuffer(lutBuf,0,lut)
 msg.remove();await update()
-window.dbg=()=>({s,cx,cy,k:k(),w:cv.width,h:cv.height,wkN,sel,cells:cells.size,baseN,
-  wk,pick,go:(x,y,z)=>{cx=x;cy=y;s=z;return update()}})  // test hook
+requestAnimationFrame(anim)                            // the laid-year build-out, 1850 → today
+window.dbg=()=>({dev,draw,vpMat,proj,toWorld,s:S(),cam,yr,wkN,sel,cells:layers.pipe.cells.size,terr:layers.terr?.cells.size,
+  bldg:layers.bldg?.cells.size,baseN,wk,pick,layers,hgtCPU,
+  go:(x,y,z,ptc=0,az=0)=>{cam.t=[x,y];cam.dist=1/(z*TAN);cam.az=az;cam.pitch=ptc;return update()}})
 </script>
 </html>

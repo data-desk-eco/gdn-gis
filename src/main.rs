@@ -33,7 +33,9 @@ use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 
-mod map; // gpu-map artefact generation (dist/map.f32 / .idx / .base.f32 / .json)
+mod bldg; // osm buildings layer (dist/bldg.bin / .idx / .tsv / .tofs)
+mod map; // gpu-map artefact generation (dist/map.bin / .idx / .base.bin / .json)
+mod terrain; // relief tiers (dist/terr0.bin / terr1.bin / terr1.idx)
 mod works; // streetworks incident artefacts (dist/works.f32 / .tsv)
 
 // cgm class-4 graphical primitives we treat as geometry
@@ -807,9 +809,16 @@ fn main() {
             .ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
         .unwrap_or_else(|| cfg.password.clone());
 
-    // --works: regenerate only the streetworks incident artefacts (no zip needed)
+    // single-layer modes: regenerate one artefact family without touching the zip
+    let mcfg = || cfg.map.as_ref().expect("no [map]");
     if argv.iter().any(|a| a == "--works") {
-        return works::write(cfg.works.as_ref().expect("no [works]"), cfg.map.as_ref().expect("no [map]"));
+        return works::write(cfg.works.as_ref().expect("no [works]"), mcfg());
+    }
+    if argv.iter().any(|a| a == "--terrain") {
+        return terrain::write(mcfg());
+    }
+    if argv.iter().any(|a| a == "--buildings") {
+        return bldg::write(mcfg());
     }
 
     if jobs > 0 {
