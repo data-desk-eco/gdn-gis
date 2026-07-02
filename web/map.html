@@ -7,7 +7,7 @@ canvas{display:block;width:100vw;height:100vh;cursor:grab;touch-action:none}canv
 #hud{position:fixed;top:12px;left:14px;pointer-events:none;text-shadow:0 1px 3px #000}
 #hud b{font-size:15px;color:#fff}
 #hud small{opacity:.55}
-#leg{position:fixed;bottom:14px;left:14px;pointer-events:none;text-shadow:0 1px 3px #000}
+#leg{position:fixed;top:12px;right:14px;pointer-events:none;text-shadow:0 1px 3px #000}
 #leg .grid{display:grid;grid-template-columns:auto auto;gap:1px 16px}
 #leg .key{display:flex;align-items:center;gap:6px;opacity:.95}
 #leg .key i{width:14px;height:3px;border-radius:2px;flex:none}
@@ -40,7 +40,7 @@ canvas{display:block;width:100vw;height:100vh;cursor:grab;touch-action:none}canv
 <div id=tl><button id=play>⏸</button><input id=yrs type=range><span id=ylab></span></div>
 <div id=msg>loading…</div>
 <script type=module>
-const cv=document.getElementById('c'),msg=document.getElementById('msg'),leg=document.getElementById('leg')
+const cv=document.getElementById('c'),msg=document.getElementById('msg')
 const die=t=>{msg.textContent=t;throw t}
 if(!navigator.gpu)die('this browser has no webgpu')
 const dev=await(await navigator.gpu.requestAdapter())?.requestDevice()||die('no webgpu adapter')
@@ -313,8 +313,8 @@ function rect(){const pts=[[0,0],[cv.width,0],[0,cv.height],[cv.width,cv.height]
 
 function draw(){
   const s=S(),vp=vpMat()
-  let t=[0,0,0,0]                                      // tooltip quad in ndc, anchored above the legend
-  if(tipTex){const x=14*dpr,y=(leg.getBoundingClientRect().top-8)*dpr
+  let t=[0,0,0,0]                                      // tooltip quad in ndc, bottom-left corner
+  if(tipTex){const x=14*dpr,y=(innerHeight-14)*dpr
     t=[x/cv.width*2-1,1-y/cv.height*2,(x+tipW)/cv.width*2-1,1-(y-tipH)/cv.height*2]}
   // terrain wire: strided posts over the full ground footprint (not the clamped
   // paging rect — a pitched horizon must still get relief), ~14 px spacing near
