@@ -91,8 +91,7 @@ const toWorld=(px,py)=>{const asp=cv.width/cv.height,{e,ez,x,y,z}=basis()
 const EXAG=1.5                                         // vertical exaggeration, shader + cpu mirror
 const uni=dev.createBuffer({size:128,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST})
 const lutBuf=dev.createBuffer({size:N*4,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST})
-const visBuf=dev.createBuffer({size:4096,usage:GPUBufferUsage.STORAGE|GPUBufferUsage.COPY_DST})
-const T1L=224                                          // lidar texture-array layers (lru pool)
+const T1L=256                                          // lidar texture-array layers (lru pool)
 const t0Tex=dev.createTexture({size:[T0N,T0N],format:'r16uint',usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST})
 const t1Tex=dev.createTexture({size:[T1P,T1P,T1L],format:'r16uint',usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST})
 const WG=`
@@ -101,7 +100,6 @@ struct V{vp:mat4x4f,ms:vec4f,tip:vec4f,tw:vec4f,tw2:vec4f};
 @group(0)@binding(1)var t0:texture_2d<u32>;
 @group(0)@binding(2)var t1:texture_2d_array<u32>;
 @group(0)@binding(3)var<storage> lut:array<i32>;
-@group(0)@binding(4)var<storage> vis:array<u32>;
 const MINX=${MINX}.0; const MINY=${MINY}.0; const CELL=${CELL}.0; const NC=${NCOLS}u; const EX=${EXAG};
 fn dm2km(e:f32)->f32{return (e-1000.)*EX*1e-4;}
 fn hgt(p:vec2f)->f32{                                  // terrain height (km, exaggerated) at bng km
@@ -160,30 +158,19 @@ struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(
   if(a<.01){discard;}
   let base=select(vec3f(.55,.58,.64),vec3f(1.),em>.5); // emergency white, urgent grey
   return vec4f(select(base,vec3f(.29,.84,1.),hot>.5),a*.95);}`})
-// terrain wire: fully procedural line grids over the height textures — no vertex
-// buffers. COARSE=1 walks a strided rect of the national grid (tw = i0,j0,st,nw;
-// tw2.x = nh); COARSE=0 walks each visible lidar cell (vis[]; tw2 = nh,dst,lpc,pitch).
+// terrain wire: one procedural strided line grid over the whole footprint
+// (tw = i0,j0,st,nw; tw2.x = nh; st fractional, ~14 px on screen) — hgt() picks
+// a resident lidar cell where one exists and the bilinear 200 m grid elsewhere,
+// so density is uniform with no per-cell seams or holes.
 const tmod=dev.createShaderModule({code:WG+`
-override COARSE:f32=1.;
 @vertex fn vs(@builtin(vertex_index)vi:u32,@builtin(instance_index)li:u32)->@builtin(position)vec4f{
   let k=vi>>1u; let odd=vi&1u;
-  if(COARSE>.5){
-    let st=v.tw.z; let nw=u32(v.tw.w); let nh=u32(v.tw2.x);
-    var g:vec2f;
-    if(li<nh){ if(k+odd>=nw){return OFF;} g=v.tw.xy+st*vec2f(f32(k+odd),f32(li)); }
-    else     { if(k+odd>=nh){return OFF;} g=v.tw.xy+st*vec2f(f32(li-nh),f32(k+odd)); }
-    if(g.x>${T0N-1}.||g.y>${T0N-1}.){return OFF;}
-    let gi=vec2u(clamp(g,vec2f(0.),vec2f(${T0N-1}.)));
-    let p=vec2f(MINX,MINY)+vec2f(gi)*${T0S};
-    return v.vp*vec4f(p,dm2km(f32(textureLoad(t0,gi,0).r)),1.);}
-  let dst=v.tw2.y; let lpc=u32(v.tw2.z); let cell=vis[li/(2u*lpc)]; let ln=li%(2u*lpc);
-  let l=lut[cell]; if(l<0){return OFF;}
-  let a=min(dst*f32(k+odd),${T1P-1}.); let b=min(dst*f32(ln%lpc),${T1P-1}.);
-  if(dst*f32(k)>=${T1P-1}.){return OFF;}
-  var g:vec2f; if(ln<lpc){g=vec2f(a,b);}else{g=vec2f(b,a);}
-  let gi=vec2u(g);
-  let p=vec2f(MINX,MINY)+(vec2f(f32(cell%NC),f32(cell/NC))+vec2f(gi)/${T1P-1}.)*CELL;
-  return v.vp*vec4f(p,dm2km(f32(textureLoad(t1,gi,u32(l),0).r)),1.);}
+  let st=v.tw.z; let nw=u32(v.tw.w); let nh=u32(v.tw2.x);
+  var g:vec2f;
+  if(li<nh){ if(k+1u>=nw){return OFF;} g=v.tw.xy+st*vec2f(f32(k+odd),f32(li)); }
+  else     { if(k+1u>=nh){return OFF;} g=v.tw.xy+st*vec2f(f32(li-nh),f32(k+odd)); }
+  let p=vec2f(MINX,MINY)+g*${T0S};
+  return v.vp*vec4f(p,hgt(p),1.);}
 @fragment fn fs()->@location(0)vec4f{
   return vec4f(.30,.42,.50,.12+.26*smoothstep(.02,.5,v.tw2.w));}`})
 // tooltip: 2d-canvas text uploaded as a texture, drawn just above the legend
@@ -199,8 +186,7 @@ const bgl=dev.createBindGroupLayout({entries:[
  {binding:0,visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT,buffer:{}},
  {binding:1,visibility:GPUShaderStage.VERTEX,texture:{sampleType:'uint'}},
  {binding:2,visibility:GPUShaderStage.VERTEX,texture:{sampleType:'uint',viewDimension:'2d-array'}},
- {binding:3,visibility:GPUShaderStage.VERTEX,buffer:{type:'read-only-storage'}},
- {binding:4,visibility:GPUShaderStage.VERTEX,buffer:{type:'read-only-storage'}}]})
+ {binding:3,visibility:GPUShaderStage.VERTEX,buffer:{type:'read-only-storage'}}]})
 const bglT=dev.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},
   {binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{}}]})
 const blend={color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}}
@@ -212,7 +198,7 @@ const mk=(m,c,bufs)=>dev.createRenderPipeline({layout,primitive:line,
   vertex:{module:m,entryPoint:'vs',constants:c,buffers:bufs},
   fragment:{module:m,entryPoint:'fs',constants:c,targets:[{format:fmt,blend}]}})
 const pipe=mk(mod,{PASS:0},V12),pipeHL=mk(mod,{PASS:1},V12),bpipe=mk(bmod,undefined,V12)
-const twire=mk(tmod,{COARSE:1}),dwire=mk(tmod,{COARSE:0})
+const twire=mk(tmod)
 const wpipe=dev.createRenderPipeline({layout,primitive:{topology:'triangle-strip'},
   vertex:{module:wmod,entryPoint:'vs',buffers:[{arrayStride:16,stepMode:'instance',attributes:[
     {shaderLocation:0,offset:0,format:'float32x2'},{shaderLocation:1,offset:8,format:'float32x2'}]}]},
@@ -222,7 +208,7 @@ const ppipe=dev.createRenderPipeline({layout:dev.createPipelineLayout({bindGroup
   fragment:{module:pmod,entryPoint:'fs',targets:[{format:fmt,blend}]}})
 const bg=dev.createBindGroup({layout:bgl,entries:[{binding:0,resource:{buffer:uni}},
  {binding:1,resource:t0Tex.createView()},{binding:2,resource:t1Tex.createView()},
- {binding:3,resource:{buffer:lutBuf}},{binding:4,resource:{buffer:visBuf}}]})
+ {binding:3,resource:{buffer:lutBuf}}]})
 
 const mkbuf=ab=>{const b=dev.createBuffer({size:Math.max(12,ab.byteLength),usage:GPUBufferUsage.VERTEX|GPUBufferUsage.COPY_DST})
   dev.queue.writeBuffer(b,0,ab);return b}
@@ -322,32 +308,29 @@ function rect(){const pts=[[0,0],[cv.width,0],[0,cv.height],[cv.width,cv.height]
   const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1])
   const tc=(cam.t[0]-MINX)/CELL|0,tr=(cam.t[1]-MINY)/CELL|0,R=16
   return[clamp((Math.min(...xs)-MINX)/CELL|0,Math.max(0,tc-R),NCOLS-1),clamp((Math.max(...xs)-MINX)/CELL|0,0,Math.min(NCOLS-1,tc+R)),
-         clamp((Math.min(...ys)-MINY)/CELL|0,Math.max(0,tr-R),NROWS-1),clamp((Math.max(...ys)-MINY)/CELL|0,0,Math.min(NROWS-1,tr+R))]}
+         clamp((Math.min(...ys)-MINY)/CELL|0,Math.max(0,tr-R),NROWS-1),clamp((Math.max(...ys)-MINY)/CELL|0,0,Math.min(NROWS-1,tr+R)),
+         [Math.min(...xs),Math.max(...xs),Math.min(...ys),Math.max(...ys)]]}   // unclamped world bbox for the coarse wire
 
 function draw(){
   const s=S(),vp=vpMat()
   let t=[0,0,0,0]                                      // tooltip quad in ndc, anchored above the legend
   if(tipTex){const x=14*dpr,y=(leg.getBoundingClientRect().top-8)*dpr
     t=[x/cv.width*2-1,1-y/cv.height*2,(x+tipW)/cv.width*2-1,1-(y-tipH)/cv.height*2]}
-  // coarse wire rect: strided posts over the ground footprint, ~14 px spacing
-  const wire=cam.pitch>.02,[c0,c1,r0,r1]=rect()
-  const st=Math.max(1,Math.ceil(14/(T0S*s*cv.height/2)))
-  const i0=c0*CELL/T0S,j0=r0*CELL/T0S
-  const nw=Math.min(500,Math.ceil(((c1-c0+1)*CELL/T0S)/st)+1),nh=Math.min(500,Math.ceil(((r1-r0+1)*CELL/T0S)/st)+1)
-  // detail wire: visible lidar cells + per-cell stride for ~10 px spacing
-  const dvis=[]
-  if(s>=TH&&layers.terr)for(const[id,e]of layers.terr.cells)if(e.vis&&lut[id]>=0&&dvis.length<1024)dvis.push(id)
-  const cellpx=CELL*s*cv.height/2
-  const dst=Math.max(1,Math.ceil((T1P-1)/(cellpx/10)))
-  const lpc=Math.floor((T1P-1)/dst)+1
-  if(dvis.length)dev.queue.writeBuffer(visBuf,0,new Uint32Array(dvis))
+  // terrain wire: strided posts over the full ground footprint (not the clamped
+  // paging rect — a pitched horizon must still get relief), ~14 px spacing near
+  // the target, stride widened to keep within the 500-post budget
+  const wire=cam.pitch>.02||s>=TH,bb=rect()[4]
+  const gx0=clamp((bb[0]-MINX)/T0S,0,T0N-1),i1=clamp((bb[1]-MINX)/T0S,0,T0N-1)
+  const gy0=clamp((bb[2]-MINY)/T0S,0,T0N-1),j1=clamp((bb[3]-MINY)/T0S,0,T0N-1)
+  const st=Math.max(.05,14/(T0S*s*cv.height/2),(i1-gx0)/499,(j1-gy0)/499)
+  const i0=Math.floor(gx0/st)*st,j0=Math.floor(gy0/st)*st   // snap to stride so the grid is world-stable
+  const nw=Math.ceil((i1-i0)/st)+1,nh=Math.ceil((j1-j0)/st)+1
   dev.queue.writeBuffer(uni,0,new Float32Array([...vp,
-    RPX*2/cv.width,RPX*2/cv.height,sel,yr>Y1?9e3:yr, ...t, i0,j0,st,nw, nh,dst,lpc,cam.pitch]))
+    RPX*2/cv.width,RPX*2/cv.height,sel,yr>Y1?9e3:yr, ...t, i0,j0,st,nw, nh,0,0,cam.pitch]))
   const e=dev.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),
     clearValue:{r:.043,g:.043,b:.063,a:1},loadOp:'clear',storeOp:'store'}]})
   p.setBindGroup(0,bg)
   if(wire){p.setPipeline(twire);p.draw(2*Math.max(nw,nh),nw+nh)}
-  if(dvis.length&&(wire||s>=TH)){p.setPipeline(dwire);p.draw(2*Math.ceil((T1P-1)/dst),dvis.length*2*lpc)}
   const B=layers.bldg
   if(B&&s>=BTH){p.setPipeline(bpipe)
     for(const o of B.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(6,o.n)}}
