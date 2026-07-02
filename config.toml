@@ -5,9 +5,9 @@
 # distributions; this file supplies everything specific to the gas-network data.
 # point it at another maps-viewer export by editing the values below.
 #
-#   gdn-gis fetch-maps -u USER -p PASS   # download the bundle below via dnv veracity
+#   scripts/fetch-maps.sh data/maps-viewer.zip USER PASS   # download the bundle below
 #   gdn-gis                              # extract it -> geoparquet + gpu-map artefacts
-#   gdn-gis fetch-works                  # stream the street manager permit archive
+#   scripts/fetch-works.sh data/streetworks                # stream the permit archive
 #   gdn-gis --works                      # (re)build just the incident artefacts
 
 zip = "data/maps-viewer.zip"
@@ -72,12 +72,10 @@ ncols = 180                        # 180 * 2 km = 360 km east  (to e 660)
 nrows = 180                        # 180 * 2 km = 360 km north (to n 516)
 view = [616.389, 244.655, 0.27]    # default view: ipswich centre + zoom (km, ndc/km)
 
-# streetworks incident artefacts (see src/works.rs). `gdn-gis fetch-works` streams the
-# dft street manager permit archive from the open `bucket`, keeping every gas
-# transporter (`fetch_match`) into `dir`; extraction then narrows to the `promoter`'s
-# immediate-category digs — escape/emergency repairs — as clickable map circles.
+# streetworks incident artefacts (see src/works.rs). scripts/fetch-works.sh streams
+# the dft street manager permit archive into `dir`, keeping every gas transporter;
+# extraction then narrows to the `promoter`'s immediate-category digs — escape /
+# emergency repairs — as clickable map circles.
 [works]
 dir = "data/streetworks"
 promoter = "(?i)cadent"
-bucket = "https://opendata.manage-roadworks.service.gov.uk"
-fetch_match = "cadent|gas|wales and west|fulcrum"

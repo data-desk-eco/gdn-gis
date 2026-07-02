@@ -15,19 +15,25 @@ filter, attribute vocabulary, labelling, crs) lives in `config.toml`; the gas
 network is just one such config. the whole distribution (2.7 GB, 168k tiles) is
 processed in ~30 s.
 
+the two source datasets are fetched by standalone shell scripts (curl / bsdtar /
+jq); the rust binary is the pure parser.
+
 ```sh
+# 1. fetch the sources (nothing downloaded by hand)
+scripts/fetch-maps.sh data/maps-viewer.zip USER PASS   # dnv veracity login -> latest bundle
+scripts/fetch-works.sh data/streetworks                # stream the street manager permit archive
+
+# 2. build
 cargo build --release
-./target/release/gdn-gis fetch-maps -u USER -p PASS   # download the latest bundle via dnv veracity
-./target/release/gdn-gis                              # extract it -> geoparquet + gpu-map artefacts
-./target/release/gdn-gis fetch-works                  # stream the street manager permit archive
-./target/release/gdn-gis --works                      # (re)build just the incident artefacts
+./target/release/gdn-gis            # extract the bundle -> geoparquet + gpu-map artefacts
+./target/release/gdn-gis --works    # (re)build just the incident artefacts from the archive
 ```
 
-run it from the repo root: paths in the config (`zip`, `output`, `area.file`,
-`works.dir`) are relative to the working directory.
+run the binary from the repo root: paths in the config (`zip`, `output`,
+`area.file`, `works.dir`) are relative to the working directory.
 
 ```
-gdn-gis [CONFIG.toml] [ZIP] [options]     extract (default)
+gdn-gis [CONFIG.toml] [ZIP] [options]
   CONFIG.toml   extraction config            (default config.toml)
   ZIP           tile archive                 (overrides config `zip`)
   -o FILE       output geoparquet            (overrides config `output`)
@@ -36,18 +42,20 @@ gdn-gis [CONFIG.toml] [ZIP] [options]     extract (default)
   --limit N     only the first N tiles       (debug)
   -j N          worker threads               (default: all cores)
   --works       rebuild only dist/works.* from an already-fetched archive
-
-gdn-gis fetch-maps [-u USER] [-p PASS] [-o ZIP]
-  authenticate to dnv veracity (azure b2c) and download the latest maps viewer
-  bundle to config `zip`. credentials also read from $VERACITY_USER / $VERACITY_PASS.
-
-gdn-gis fetch-works
-  stream the dft street manager permit archive (open s3 bucket, config `[works]`),
-  keeping every gas transporter into `works.dir`. skips months already fetched.
 ```
 
-both fetch flows are thin wrappers over `scripts/fetch-maps.sh` and
-`scripts/fetch-works.sh`, which drive the network hops with curl / bsdtar / jq.
+### fetching the sources
+
+```
+scripts/fetch-maps.sh OUT USER PASS
+  authenticate to dnv veracity (azure b2c) and download the latest maps viewer
+  bundle to OUT. USER / PASS are the veracity account credentials.
+
+scripts/fetch-works.sh DIR [BUCKET] [MATCH]
+  stream the dft street manager permit archive (open s3 bucket, BUCKET defaults to
+  the dft one), keeping every gas transporter (MATCH) into DIR. skips months
+  already fetched.
+```
 
 ### the config
 

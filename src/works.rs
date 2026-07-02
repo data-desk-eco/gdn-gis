@@ -23,23 +23,13 @@ use crate::map::MapCfg;
 
 #[derive(Deserialize)]
 pub struct WorksCfg {
-    pub(crate) dir: String,
-    promoter: String, // regex over promoter_organisation, narrowing the fetched set
+    dir: String,      // where fetch-works.sh streamed the *.ndjson.gz archive
+    promoter: String, // regex over promoter_organisation
     #[serde(default = "d_cat")]
     category: String, // work_category_ref prefix
-    #[serde(default = "d_bucket")]
-    pub(crate) bucket: String, // dft street manager open-data s3 bucket
-    #[serde(default = "d_match")]
-    pub(crate) fetch_match: String, // broad promoter regex fetch keeps (all gas transporters)
 }
 fn d_cat() -> String {
     "immediate".into()
-}
-fn d_bucket() -> String {
-    "https://opendata.manage-roadworks.service.gov.uk".into()
-}
-fn d_match() -> String {
-    "cadent|gas|wales and west|fulcrum".into()
 }
 
 #[derive(Deserialize)]
