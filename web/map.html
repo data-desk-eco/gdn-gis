@@ -1,6 +1,6 @@
 <!doctype html><html lang=en><meta charset=utf8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>Cadent gas mains — by material, MPDI highlighted</title>
+<title>UK gas network</title>
 <style>
 html,body{margin:0;height:100%;background:#0b0b10;overflow:hidden;font:13px/1.4 system-ui,sans-serif;color:#cdd2dc}
 canvas{display:block;width:100vw;height:100vh;cursor:grab}canvas:active{cursor:grabbing}
@@ -10,34 +10,29 @@ canvas{display:block;width:100vw;height:100vh;cursor:grab}canvas:active{cursor:g
 #leg .grid{display:grid;grid-template-columns:auto auto;gap:1px 16px}
 #leg .key{display:flex;align-items:center;gap:6px;opacity:.95}
 #leg .key i{width:14px;height:3px;border-radius:2px;flex:none}
-#leg .key i.dot{width:9px;height:9px;border-radius:50%}
-#card{position:fixed;top:64px;left:14px;max-width:270px;background:#14141cf2;border:1px solid #2a2a3a;
- border-radius:10px;padding:11px 14px;display:none;box-shadow:0 6px 24px #0009}
-#card b{color:#fff}#card .cat{color:#ffb454}#card .dim{opacity:.65}
+#leg .key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #fff}
 #msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}
 </style>
 <canvas id=c></canvas>
-<div id=hud><b>Cadent gas distribution mains</b></div>
-<div id=card></div>
+<div id=hud><b>UK gas network</b></div>
 <div id=leg>
  <div class=grid>
   <div class=key><i style="background:#ef4b3d"></i>cast iron</div>
-  <div class=key><i style="background:#edc948"></i>ductile iron</div>
   <div class=key><i style="background:#f28e2b"></i>spun iron</div>
+  <div class=key><i style="background:#edc948"></i>ductile iron</div>
+  <div class=key><i style="background:#ff2d9b"></i>m.p. ductile iron</div>
   <div class=key><i style="background:#76b7b2"></i>steel</div>
   <div class=key><i style="background:#b07aa1"></i>asbestos cement</div>
   <div class=key><i style="background:#59a14f"></i>pvc</div>
   <div class=key><i style="background:#9c755f"></i>lead</div>
   <div class=key><i style="background:#4e93d0"></i>polyethylene</div>
   <div class=key><i style="background:#4d5261"></i>unknown</div>
-  <div class=key><i style="background:#ff2d9b"></i>medium-pressure ductile iron</div>
+  <div class=key><i class=dot></i>emergency</div>
  </div>
- <div class=key><i class=dot style="background:#fff"></i>emergency dig, jul 2020– (click for details)</div>
- <div class=key><i class=dot style="background:#9fb1c6"></i>urgent dig</div>
 </div>
 <div id=msg>loading…</div>
 <script type=module>
-const cv=document.getElementById('c'),msg=document.getElementById('msg'),card=document.getElementById('card')
+const cv=document.getElementById('c'),msg=document.getElementById('msg'),leg=document.getElementById('leg')
 const die=t=>{msg.textContent=t;throw t}
 if(!navigator.gpu)die('this browser has no webgpu')
 const dev=await(await navigator.gpu.requestAdapter())?.requestDevice()||die('no webgpu adapter')
@@ -52,8 +47,8 @@ const TH=meta.detail_scale,CAP=700                    // detail kicks in at scal
 let cx=meta.view.cx,cy=meta.view.cy,s=meta.view.s     // world is british national grid, kilometres
 
 let sel=-1                                             // picked incident index (-1 = none)
-const uni=dev.createBuffer({size:48,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST})
-const UNI=`struct V{ctr:vec4f,s:f32,k:f32,r:vec2f,sel:f32};
+const uni=dev.createBuffer({size:64,usage:GPUBufferUsage.UNIFORM|GPUBufferUsage.COPY_DST})
+const UNI=`struct V{ctr:vec4f,s:f32,k:f32,r:vec2f,sel:f32,tip:vec4f};
 @group(0)@binding(0)var<uniform> v:V;`
 const mod=dev.createShaderModule({code:UNI+`
 override PASS:f32=0.;                                  // 0 = material base layer, 1 = mpdi highlight on top
@@ -69,20 +64,29 @@ struct O{@builtin(position)p:vec4f,@location(0)t:f32,@location(1)@interpolate(fl
     vec3f(.937,.294,.239),vec3f(.949,.557,.169),vec3f(.690,.478,.631),vec3f(.612,.459,.373),
     vec3f(.929,.788,.282),vec3f(.463,.718,.698),vec3f(.349,.631,.310),vec3f(.306,.576,.816));
   return vec4f(pal[u32(t+.5)],.82);}`})
-// street-manager incident circles: fixed screen-size instanced quads, soft-edged
+// street-manager incident circles: fixed screen-size instanced hollow rings
 const wmod=dev.createShaderModule({code:UNI+`
-struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)cat:f32,@location(2)@interpolate(flat)hot:f32};
-@vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f,@location(1)day:f32,@location(2)cat:f32)->O{
+struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32};
+@vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f)->O{
   var cn=array<vec2f,4>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(1,1));
   let q=cn[i];let hot=select(0.,1.,f32(inst)==v.sel);
   let c=pt-v.ctr.xy;let r=v.r*select(1.,1.8,hot>.5);
-  return O(vec4f(c.x*v.s*v.k+q.x*r.x,c.y*v.s+q.y*r.y,0,1),q,cat,hot);}
-@fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)cat:f32,@location(2)@interpolate(flat)hot:f32)->@location(0)vec4f{
-  let d=length(q);if(d>1.){discard;}
-  var col=select(vec3f(.62,.69,.78),vec3f(1),cat>.5);
-  if(hot>.5&&d>.55){col=vec3f(.29,.84,1.);}            // selection ring
-  return vec4f(col,smoothstep(1.,.72,d)*select(.8,.92,cat>.5));}`})
+  return O(vec4f(c.x*v.s*v.k+q.x*r.x,c.y*v.s+q.y*r.y,0,1),q,hot);}
+@fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32)->@location(0)vec4f{
+  let a=smoothstep(.13,.07,abs(length(q)-.89));        // hollow ring, ~1px border
+  if(a<.01){discard;}
+  return vec4f(select(vec3f(1.),vec3f(.29,.84,1.),hot>.5),a*.95);}`})
+// tooltip: 2d-canvas text uploaded as a texture, drawn just above the legend
+const tmod=dev.createShaderModule({code:UNI+`
+@group(1)@binding(0)var ts:sampler;@group(1)@binding(1)var tt:texture_2d<f32>;
+struct O{@builtin(position)p:vec4f,@location(0)uv:vec2f};
+@vertex fn vs(@builtin(vertex_index)i:u32)->O{
+  var cn=array<vec2f,4>(vec2f(0,0),vec2f(1,0),vec2f(0,1),vec2f(1,1));let c=cn[i];
+  return O(vec4f(mix(v.tip.xy,v.tip.zw,c),0,1),vec2f(c.x,1.-c.y));}
+@fragment fn fs(@location(0)uv:vec2f)->@location(0)vec4f{return textureSample(tt,ts,uv);}`})
 const bgl=dev.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT,buffer:{}}]})
+const bglT=dev.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},
+  {binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{}}]})
 const blend={color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}}
 const layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]})
 const mkpipe=PASS=>dev.createRenderPipeline({layout,
@@ -95,9 +99,11 @@ const pipe=mkpipe(0),pipeHL=mkpipe(1)
 const wpipe=dev.createRenderPipeline({layout,
   primitive:{topology:'triangle-strip'},
   vertex:{module:wmod,entryPoint:'vs',buffers:[{arrayStride:16,stepMode:'instance',attributes:[
-    {shaderLocation:0,offset:0,format:'float32x2'},{shaderLocation:1,offset:8,format:'float32'},
-    {shaderLocation:2,offset:12,format:'float32'}]}]},
+    {shaderLocation:0,offset:0,format:'float32x2'}]}]},
   fragment:{module:wmod,entryPoint:'fs',targets:[{format:fmt,blend}]}})
+const tpipe=dev.createRenderPipeline({layout:dev.createPipelineLayout({bindGroupLayouts:[bgl,bglT]}),
+  primitive:{topology:'triangle-strip'},vertex:{module:tmod,entryPoint:'vs'},
+  fragment:{module:tmod,entryPoint:'fs',targets:[{format:fmt,blend}]}})
 const bg=dev.createBindGroup({layout:bgl,entries:[{binding:0,resource:{buffer:uni}}]})
 
 const mkbuf=ab=>{const b=dev.createBuffer({size:ab.byteLength,usage:GPUBufferUsage.VERTEX|GPUBufferUsage.COPY_DST})
@@ -112,8 +118,29 @@ let baseVB=null,baseN=0                                // coarse skeleton, alway
 let wkVB=null,wkN=0,wk=null,det=null                   // incident points + lazy detail lines
 const cells=new Map()                                 // cell id → {vb,n,vis,t}
 let cnt=null,off=null,tick=0                           // per-cell counts + prefix-sum offsets
+const tc=document.createElement('canvas'),tg=tc.getContext('2d')
+const samp=dev.createSampler({magFilter:'linear',minFilter:'linear'})
+let tipTex=null,tipBG=null,tipW=0,tipH=0
+function tip(lines){                                   // text → texture; null clears
+  tipTex?.destroy();tipTex=null
+  if(lines){const F=13*dpr,LH=18*dpr,P=4*dpr
+    tg.font=`bold ${F}px system-ui`
+    tipW=Math.ceil(Math.max(...lines.map(l=>tg.measureText(l).width))+2*P)
+    tipH=Math.ceil(lines.length*LH+2*P)
+    tc.width=tipW;tc.height=tipH                       // resets 2d state
+    tg.textBaseline='top';tg.shadowColor='#000';tg.shadowBlur=3*dpr;tg.shadowOffsetY=dpr
+    lines.forEach((l,i)=>{tg.font=`${i?'':'bold '}${F}px system-ui`;tg.fillStyle=i?'#cdd2dc':'#fff'
+      tg.fillText(l,P,P+i*LH)})
+    tipTex=dev.createTexture({size:[tipW,tipH],format:'rgba8unorm',
+      usage:GPUTextureUsage.TEXTURE_BINDING|GPUTextureUsage.COPY_DST|GPUTextureUsage.RENDER_ATTACHMENT})
+    dev.queue.copyExternalImageToTexture({source:tc},{texture:tipTex},[tipW,tipH])
+    tipBG=dev.createBindGroup({layout:bglT,entries:[{binding:0,resource:samp},{binding:1,resource:tipTex.createView()}]})}
+  draw()}
 function draw(){
-  dev.queue.writeBuffer(uni,0,new Float32Array([cx,cy,0,0,s,k(),RPX*2/cv.width,RPX*2/cv.height,sel,0,0,0]))
+  let t=[0,0,0,0]                                      // tooltip quad in ndc, anchored above the legend
+  if(tipTex){const x=14*dpr,y=(leg.getBoundingClientRect().top-8)*dpr
+    t=[x/cv.width*2-1,1-y/cv.height*2,(x+tipW)/cv.width*2-1,1-(y-tipH)/cv.height*2]}
+  dev.queue.writeBuffer(uni,0,new Float32Array([cx,cy,0,0,s,k(),RPX*2/cv.width,RPX*2/cv.height,sel,0,0,0,...t]))
   const e=dev.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),
     clearValue:{r:.043,g:.043,b:.063,a:1},loadOp:'clear',storeOp:'store'}]})
   p.setBindGroup(0,bg)
@@ -122,6 +149,7 @@ function draw(){
     if(baseN){p.setVertexBuffer(0,baseVB);p.draw(2,baseN)}
     if(s>=TH)for(const o of cells.values())if(o.vis){p.setVertexBuffer(0,o.vb);p.draw(2,o.n)}}
   if(wkN&&s>=TH){p.setPipeline(wpipe);p.setVertexBuffer(0,wkVB);p.draw(4,wkN)}  // incidents on top
+  if(tipTex){p.setPipeline(tpipe);p.setBindGroup(1,tipBG);p.draw(4)}
   p.end();dev.queue.submit([e.finish()])}
 
 const toWorld=(px,py)=>[cx+(px/cv.width*2-1)/(s*k()),cy+(1-py/cv.height*2)/s]
@@ -147,25 +175,22 @@ async function update(){                               // pick visible cells, ra
       cells.set(id,{vb:mkbuf(new Uint8Array(ab,p,len)),n:cnt[id],vis:1,t:tick++});p+=len}}))
   evict();draw()}
 
-const esc=t=>t.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))
-async function pick(x,y){                              // nearest incident within ~9 px → detail card
+async function pick(x,y){                              // nearest incident within ~9 px → tooltip
   if(!wkN||s<TH)return
   const[wx,wy]=toWorld(x,y),tx=9*dpr*2/(cv.width*s*k()),ty=9*dpr*2/(cv.height*s)
   let bd=1;sel=-1
   for(let i=0;i<wkN;i++){const dx=(wk[i*4]-wx)/tx,dy=(wk[i*4+1]-wy)/ty,d=dx*dx+dy*dy
     if(d<bd){bd=d;sel=i}}
-  if(sel<0){card.style.display='none';return draw()}
+  if(sel<0)return tip(null)
   det??=(await(await fetch(D+'works.tsv')).text()).split('\n')  // lazy, once; row i ↔ point i
-  const[permit,cat,status,street,town,auth,start,end]=det[sel].split('\t').map(esc)
-  card.innerHTML=`<b>${street||'(no street)'}</b>${town?', '+town:''}<br>
-   <span class=cat>${cat}</span> · ${status.toLowerCase()}<br>${start}${end&&end!==start?' → '+end:''}<br>
-   <span class=dim>${auth.toLowerCase()}<br>permit ${permit}</span>`
-  card.style.display='block';draw()}
+  const[permit,cat,status,street,town,auth,start,end]=det[sel].split('\t')
+  tip([`${street||'(no street)'}${town?', '+town:''}`,`${cat} · ${status.toLowerCase()}`,
+    start+(end&&end!==start?' → '+end:''),`${auth.toLowerCase()} · permit ${permit}`])}
 
 let timer
 const sched=()=>{clearTimeout(timer);timer=setTimeout(update,110)}    // debounce fetches while moving
 cv.onwheel=ev=>{ev.preventDefault();const[wx,wy]=toWorld(ev.offsetX*dpr,ev.offsetY*dpr)
-  s=clamp(s*Math.exp(-ev.deltaY*.0015),meta.smin,meta.smax);const[nx,ny]=toWorld(ev.offsetX*dpr,ev.offsetY*dpr)
+  s=clamp(s*Math.exp(-ev.deltaY*.003),meta.smin,meta.smax);const[nx,ny]=toWorld(ev.offsetX*dpr,ev.offsetY*dpr)
   cx+=wx-nx;cy+=wy-ny;draw();sched()}
 let px,py,mv
 cv.onpointerdown=e=>{px=e.offsetX*dpr;py=e.offsetY*dpr;mv=0;try{cv.setPointerCapture(e.pointerId)}catch{}}
@@ -182,6 +207,7 @@ baseVB=mkbuf(await(await fetch(D+'map.base.f32')).arrayBuffer());baseN=baseVB.si
 fetch(D+'works.f32').then(r=>r.ok?r.arrayBuffer():null).then(ab=>{     // incidents are optional
   if(ab){wk=new Float32Array(ab);wkVB=mkbuf(ab);wkN=wk.length/4;draw()}})
 msg.remove();await update()
-window.dbg=()=>({s,cx,cy,k:k(),w:cv.width,h:cv.height,wkN,sel,cells:cells.size,baseN})  // test hook
+window.dbg=()=>({s,cx,cy,k:k(),w:cv.width,h:cv.height,wkN,sel,cells:cells.size,baseN,
+  wk,pick,go:(x,y,z)=>{cx=x;cy=y;s=z;return update()}})  // test hook
 </script>
 </html>
