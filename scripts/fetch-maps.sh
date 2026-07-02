@@ -56,18 +56,16 @@ done
 # 3. hand the code + id_token to the app, which sets its session cookie
 postform "$page" >/dev/null
 
-# 4. scrape the per-edition zip password off the download page (into config.toml,
-# where gdn-gis reads it) before pulling the ~3gb bundle it decrypts.
-root=$(cd "$(dirname "$0")/.." && pwd)
+# 4. scrape the per-edition zip password off the download page, into a .zip-password
+# file beside the zip (where gdn-gis reads it), before pulling the ~3gb bundle.
 dl=$(c -L https://mapsviewerportal.com/DownloadMapsViewer)
 pw=$(printf %s "$dl" | sed -E 's/<[^>]+>/ /g' | tr -s ' \t\r\n' ' ' \
   | grep -ioE 'password is [A-Za-z0-9][A-Za-z0-9._-]*' | head -1 \
   | grep -oE '[A-Za-z0-9][A-Za-z0-9._-]*$')
-[ -n "$pw" ] || { printf %s "$dl" > "$root/download-page.html"
+[ -n "$pw" ] || { printf %s "$dl" > download-page.html
   echo "fetch-maps: no password found on download page (dumped to download-page.html)" >&2; exit 1; }
-awk -v p="$pw" '/^password = /{print "password = \"" p "\""; next} {print}' \
-  "$root/config.toml" > "$root/config.toml.tmp" && mv "$root/config.toml.tmp" "$root/config.toml"
-echo "fetch-maps: zip password $pw -> config.toml"
+printf %s "$pw" > "$(dirname "$out")/.zip-password"
+echo "fetch-maps: zip password $pw -> $(dirname "$out")/.zip-password"
 
 # 5. download the bundle
 c -L -o "$out" https://mapsviewerportal.com/DownloadZipFile

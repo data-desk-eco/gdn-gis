@@ -63,6 +63,7 @@ struct Config {
     zip: Option<String>,
     #[serde(default)]
     output: Option<String>,
+    #[serde(default)]
     password: String,
     square_index: usize,
     crs: String,
@@ -799,7 +800,12 @@ fn main() {
         .expect("parse config");
     let zip = zip.or_else(|| cfg.zip.clone()).expect("no zip path (config or arg)");
     let out = out.or_else(|| cfg.output.clone()).unwrap_or_else(|| "out.parquet".into());
-    let pw = pw.unwrap_or_else(|| cfg.password.clone());
+    // password priority: -p arg, then a `.zip-password` file beside the zip (written
+    // by fetch-maps.sh, which scrapes the per-edition value), then config.
+    let pw = pw
+        .or_else(|| std::fs::read_to_string(std::path::Path::new(&zip).with_file_name(".zip-password"))
+            .ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()))
+        .unwrap_or_else(|| cfg.password.clone());
 
     // --works: regenerate only the streetworks incident artefacts (no zip needed)
     if argv.iter().any(|a| a == "--works") {
