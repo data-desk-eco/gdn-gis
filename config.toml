@@ -65,3 +65,11 @@ origin = [300.0, 156.0]            # min easting, min northing (km)
 ncols = 180                        # 180 * 2 km = 360 km east  (to e 660)
 nrows = 180                        # 180 * 2 km = 360 km north (to n 516)
 view = [616.389, 244.655, 0.27]    # default view: ipswich centre + zoom (km, ndc/km)
+
+# streetworks incident artefacts (see src/works.rs): the dft street-manager
+# permit archive mirrored by gas-pipe-risk's streetworks.sh. immediate-category
+# permits by the promoter — escape/emergency-repair digs — become clickable
+# circles on the gpu map (dist/works.f32 + works.tsv).
+[works]
+dir = "../gas-pipe-risk/data/streetworks"
+promoter = "(?i)cadent"

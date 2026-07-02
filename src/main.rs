@@ -7,7 +7,7 @@
 // (password, layer filter, attribute vocabulary, labelling, crs) lives in a toml
 // config; the engine here is generic.
 //
-// usage: mvf-extract [CONFIG.toml] [ZIP] [-o OUT] [-p PASSWORD] [--square SK] [--limit N] [-j JOBS]
+// usage: mvf-extract [CONFIG.toml] [ZIP] [-o OUT] [-p PASSWORD] [--square SK] [--limit N] [-j JOBS] [--works]
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -31,6 +31,7 @@ use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 
 mod map; // gpu-map artefact generation (dist/map.f32 / .idx / .base.f32 / .json)
+mod works; // streetworks incident artefacts (dist/works.f32 / .tsv)
 
 // cgm class-4 graphical primitives we treat as geometry
 const POLYLINE: u8 = 1;
@@ -72,6 +73,8 @@ struct Config {
     area: Option<Area>,
     #[serde(default)]
     map: Option<map::MapCfg>,
+    #[serde(default)]
+    works: Option<works::WorksCfg>,
 }
 
 #[derive(Deserialize)]
@@ -795,6 +798,11 @@ fn main() {
     let out = out.or_else(|| cfg.output.clone()).unwrap_or_else(|| "out.parquet".into());
     let pw = pw.unwrap_or_else(|| cfg.password.clone());
 
+    // --works: regenerate only the streetworks incident artefacts (no zip needed)
+    if argv.iter().any(|a| a == "--works") {
+        return works::write(cfg.works.as_ref().expect("no [works]"), cfg.map.as_ref().expect("no [map]"));
+    }
+
     if jobs > 0 {
         rayon::ThreadPoolBuilder::new().num_threads(jobs).build_global().unwrap();
     }
@@ -887,6 +895,9 @@ fn main() {
     write_parquet(&rows, &cfg, &out, t0);
     if let Some(m) = &cfg.map {
         map::write(&rows, &cfg, m);
+        if let Some(w) = &cfg.works {
+            works::write(w, m);
+        }
     }
 }
 

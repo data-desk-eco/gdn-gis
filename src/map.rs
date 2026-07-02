@@ -12,10 +12,11 @@
 //                 and hilbert-sorted; tiny, always resident, shown when zoomed out.
 //   map.json      grid + default view + zoom thresholds, so map.html hardcodes none.
 //
-// tone = mrps-style material risk weight of the *live carrier* (cast iron 1.0 …
-// polyethylene 0.02; unknown -1). a pe-lined iron main reads as its pe carrier, so
-// it correctly cools to blue. flag = 1 for live medium-pressure ductile iron (mpdi),
-// the killer class — highlighted on top by the shader.
+// tone = categorical material index of the *live carrier* (see MATS: risk-ordered,
+// cast iron 0 … polyethylene 7; unknown -1, drawn grey). a pe-lined iron main reads
+// as its pe carrier. flag = 1 for live medium-pressure ductile iron (mpdi), the
+// killer class — highlighted on top by the shader. map.html's palette + legend
+// mirror MATS order.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -28,7 +29,7 @@ use crate::{parse_tip, Config, Geom, Row};
 
 #[derive(Deserialize)]
 pub struct MapCfg {
-    dir: String,
+    pub(crate) dir: String,
     cell_km: f64,
     origin: [f64; 2], // grid origin (min easting, min northing) in km
     ncols: usize,
@@ -51,20 +52,13 @@ fn d_blen() -> f64 {
     110.0
 }
 
-/// live-carrier material (full spec name) -> risk weight. mirrors gas-pipe-risk's
-/// `material_w`; -1 = unknown/unparsed (drawn grey).
+/// live-carrier materials, ordered by mrps-style risk (worst first); the tone a
+/// segment carries is its index here, and map.html's palette follows the same order.
+const MATS: [&str; 8] =
+    ["cast iron", "spun iron", "asbestos cement", "lead", "ductile iron", "steel", "pvc", "polyethylene"];
+
 fn tone(m: Option<&str>) -> f32 {
-    match m {
-        Some("cast iron") => 1.0,
-        Some("spun iron") => 0.9,
-        Some("asbestos cement") => 0.7,
-        Some("lead") => 0.5,
-        Some("ductile iron") => 0.4,
-        Some("steel") => 0.35,
-        Some("pvc") => 0.05,
-        Some("polyethylene") => 0.02,
-        _ => -1.0,
-    }
+    m.and_then(|m| MATS.iter().position(|&x| x == m)).map_or(-1.0, |i| i as f32)
 }
 
 /// perpendicular distance from p to segment a-b.
