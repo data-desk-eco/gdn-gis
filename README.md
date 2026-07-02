@@ -1,8 +1,11 @@
-# cadent gas distribution network — geospatial extraction
+# gdn-gis — uk gas distribution network geospatial data
 
-reverse-engineers the vector map data shipped inside the cadent / national grid
-**MAPS Viewer** windows distribution (`data/MapsViewerApril2026.zip`) and assembles it
-into a single distribution-ready geoparquet of the gas distribution network.
+`gdn-gis` builds geospatial datasets on uk gas distribution networks from their
+various obscure sources. its core reverse-engineers the vector map data shipped
+inside the cadent / national grid **MAPS Viewer** windows distribution and
+assembles it into a single distribution-ready geoparquet (plus gpu-map artefacts);
+it also pulls in the dft street manager permit archive as an incident overlay. it
+runs the whole flow — fetch the sources, extract — with nothing downloaded by hand.
 
 `src/main.rs` is a **generic extractor for obfuscated-webcgm (`.mvf`) tile
 distributions**: it decodes the tiles, keeps only the layers named in a config,
@@ -14,14 +17,17 @@ processed in ~30 s.
 
 ```sh
 cargo build --release
-./target/release/mvf-extract config.toml          # zip + output come from the config
+./target/release/gdn-gis fetch-maps -u USER -p PASS   # download the latest bundle via dnv veracity
+./target/release/gdn-gis                              # extract it -> geoparquet + gpu-map artefacts
+./target/release/gdn-gis fetch-works                  # stream the street manager permit archive
+./target/release/gdn-gis --works                      # (re)build just the incident artefacts
 ```
 
-run it from the repo root: paths in the config (`zip`, `output`, `area.file`)
-are relative to the working directory.
+run it from the repo root: paths in the config (`zip`, `output`, `area.file`,
+`works.dir`) are relative to the working directory.
 
 ```
-mvf-extract [CONFIG.toml] [ZIP] [options]
+gdn-gis [CONFIG.toml] [ZIP] [options]     extract (default)
   CONFIG.toml   extraction config            (default config.toml)
   ZIP           tile archive                 (overrides config `zip`)
   -o FILE       output geoparquet            (overrides config `output`)
@@ -29,7 +35,19 @@ mvf-extract [CONFIG.toml] [ZIP] [options]
   --square SK   only this 100 km square      (debug)
   --limit N     only the first N tiles       (debug)
   -j N          worker threads               (default: all cores)
+  --works       rebuild only dist/works.* from an already-fetched archive
+
+gdn-gis fetch-maps [-u USER] [-p PASS] [-o ZIP]
+  authenticate to dnv veracity (azure b2c) and download the latest maps viewer
+  bundle to config `zip`. credentials also read from $VERACITY_USER / $VERACITY_PASS.
+
+gdn-gis fetch-works
+  stream the dft street manager permit archive (open s3 bucket, config `[works]`),
+  keeping every gas transporter into `works.dir`. skips months already fetched.
 ```
+
+both fetch flows are thin wrappers over `scripts/fetch-maps.sh` and
+`scripts/fetch-works.sh`, which drive the network hops with curl / bsdtar / jq.
 
 ### the config
 

@@ -7,7 +7,9 @@
 // (password, layer filter, attribute vocabulary, labelling, crs) lives in a toml
 // config; the engine here is generic.
 //
-// usage: mvf-extract [CONFIG.toml] [ZIP] [-o OUT] [-p PASSWORD] [--square SK] [--limit N] [-j JOBS] [--works]
+// usage: gdn-gis [CONFIG.toml] [ZIP] [-o OUT] [-p PASSWORD] [--square SK] [--limit N] [-j JOBS] [--works]
+//        gdn-gis fetch-maps  [-u USER] [-p PASS] [-o ZIP]   # veracity login + bundle download
+//        gdn-gis fetch-works                                # stream the dft street manager archive
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -30,6 +32,7 @@ use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 
+mod fetch; // source-data download flows (fetch-maps / fetch-works subcommands)
 mod map; // gpu-map artefact generation (dist/map.f32 / .idx / .base.f32 / .json)
 mod works; // streetworks incident artefacts (dist/works.f32 / .tsv)
 
@@ -57,7 +60,7 @@ static FAIL_START_GAS: AtomicUsize = AtomicUsize::new(0);
 #[derive(Deserialize)]
 struct Config {
     #[serde(default)]
-    zip: Option<String>,
+    pub(crate) zip: Option<String>,
     #[serde(default)]
     output: Option<String>,
     password: String,
@@ -74,7 +77,7 @@ struct Config {
     #[serde(default)]
     map: Option<map::MapCfg>,
     #[serde(default)]
-    works: Option<works::WorksCfg>,
+    pub(crate) works: Option<works::WorksCfg>,
 }
 
 #[derive(Deserialize)]
@@ -769,6 +772,15 @@ fn main() {
     // args: [config] [zip] [-o out] [-p pw] [--square s] [--limit n] [-j j]
     let argv: Vec<String> = std::env::args().skip(1).collect();
     let mut config = "config.toml".to_string();
+    // fetch-maps / fetch-works: download a source dataset, then stop. these need only
+    // the config (for paths, the s3 bucket, credentials), not the extraction pipeline.
+    if let Some(cmd @ ("fetch-maps" | "fetch-works")) = argv.first().map(String::as_str) {
+        if let Some(i) = argv.iter().position(|a| a == "--config") {
+            config = argv[i + 1].clone();
+        }
+        let cfg: Config = toml::from_str(&std::fs::read_to_string(&config).expect("read config")).expect("parse config");
+        return fetch::run(cmd, &argv[1..], &cfg);
+    }
     let (mut zip, mut out, mut pw): (Option<String>, Option<String>, Option<String>) = (None, None, None);
     let (mut square, mut limit, mut jobs) = (None, 0usize, 0usize);
     let mut positional = 0;

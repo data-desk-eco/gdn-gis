@@ -1,10 +1,16 @@
-# extraction config for the cadent / national-grid "maps viewer" distribution.
+# config for the cadent / national-grid "maps viewer" distribution.
 #
-# mvf-extract is a generic extractor for obfuscated-webcgm (.mvf) tile
+# gdn-gis generates data on uk gas distribution networks from their various obscure
+# sources. the extractor half is a generic decoder for obfuscated-webcgm (.mvf) tile
 # distributions; this file supplies everything specific to the gas-network data.
 # point it at another maps-viewer export by editing the values below.
+#
+#   gdn-gis fetch-maps -u USER -p PASS   # download the bundle below via dnv veracity
+#   gdn-gis                              # extract it -> geoparquet + gpu-map artefacts
+#   gdn-gis fetch-works                  # stream the street manager permit archive
+#   gdn-gis --works                      # (re)build just the incident artefacts
 
-zip = "data/MapsViewerApril2026.zip"
+zip = "data/maps-viewer.zip"
 output = "dist/cadent_gas_network.parquet"
 password = "reply-Dy7bge"
 square_index = 3              # path segment giving the 100 km national-grid square
@@ -66,10 +72,12 @@ ncols = 180                        # 180 * 2 km = 360 km east  (to e 660)
 nrows = 180                        # 180 * 2 km = 360 km north (to n 516)
 view = [616.389, 244.655, 0.27]    # default view: ipswich centre + zoom (km, ndc/km)
 
-# streetworks incident artefacts (see src/works.rs): the dft street-manager
-# permit archive mirrored by gas-pipe-risk's streetworks.sh. immediate-category
-# permits by the promoter — escape/emergency-repair digs — become clickable
-# circles on the gpu map (dist/works.f32 + works.tsv).
+# streetworks incident artefacts (see src/works.rs). `gdn-gis fetch-works` streams the
+# dft street manager permit archive from the open `bucket`, keeping every gas
+# transporter (`fetch_match`) into `dir`; extraction then narrows to the `promoter`'s
+# immediate-category digs — escape/emergency repairs — as clickable map circles.
 [works]
-dir = "../gas-pipe-risk/data/streetworks"
+dir = "data/streetworks"
 promoter = "(?i)cadent"
+bucket = "https://opendata.manage-roadworks.service.gov.uk"
+fetch_match = "cadent|gas|wales and west|fulcrum"
