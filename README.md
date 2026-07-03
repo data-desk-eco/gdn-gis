@@ -1,8 +1,8 @@
-# gdn-gis — UK gas distribution network geospatial data
+# gdn-gis
 
 `gdn-gis` reverse-engineers the vector map data shipped inside the Cadent /
-National Grid **MAPS Viewer** Windows distribution and assembles it into a single
-geoparquet of the UK gas distribution network (~2.31 million pipes, ~140,000 km
+National Gas **MAPS Viewer** Windows distribution and assembles it into a single
+geoparquet of the Cadent network (~2.31 million pipes, ~140,000 km
 of main), plus the artefacts for a WebGPU map of the whole network. All sources
 are fetched automatically — nothing is downloaded by hand.
 
