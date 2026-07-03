@@ -58,7 +58,9 @@ const FOV=50*Math.PI/180,TAN=Math.tan(FOV/2)
 // ─── orbit camera: target on the ground (bng km), dist, azimuth, pitch off vertical.
 // far out the pitch clamp holds it top-down and the map behaves like the old 2d one;
 // past the detail threshold the clamp opens and the wheel dollies to the cursor.
-const cam={t:[meta.view.cx,meta.view.cy],dist:1/(meta.view.s*TAN),az:0,pitch:0}
+// boot framed on the whole footprint (full-uk view), not the config's home region
+const view0={cx:MINX+NCOLS*CELL/2,cy:MINY+NROWS*CELL/2,s:1.9/(Math.max(NCOLS,NROWS)*CELL)}
+const cam={t:[view0.cx,view0.cy],dist:1/(view0.s*TAN),az:0,pitch:0}
 const S=()=>1/(cam.dist*TAN)                          // ndc-per-km equivalent of the old zoom scale
 const maxPitch=()=>1.38*clamp(2*S()/TH-.6,0,1)
 const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]
@@ -125,7 +127,10 @@ override PASS:f32=0.;                                  // 0 = material base laye
 struct O{@builtin(position)p:vec4f,@location(0)@interpolate(flat)t:u32};
 @vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->O{
   let tone=m.y&0xffu; let yr=m.y>>8u;
-  if((PASS>.5&&(tone&0x80u)==0u)||(yr>0u&&f32(yr)+${YB}.>v.ms.w)){return O(OFF,0u);}
+  // dated lines surface at their laid year; undated ones (yr=0) wait for the very
+  // end (ms.w=9e3 sentinel) rather than sitting on screen through the whole run
+  let hide=select(v.ms.w<=${meta.yr[1]}.,f32(yr)+${YB}.>v.ms.w,yr>0u);
+  if((PASS>.5&&(tone&0x80u)==0u)||hide){return O(OFF,0u);}
   let p=world(m.x,select(q.xy,q.zw,i==1u));
   return O(v.vp*vec4f(p,hgt(p)+.002,1.),tone);}
 @fragment fn fs(@location(0)@interpolate(flat)t:u32)->@location(0)vec4f{
