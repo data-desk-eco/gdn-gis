@@ -4,14 +4,12 @@
 <style>
 html,body{margin:0;height:100%;background:#0b0b10;overflow:hidden;font:13px/1.4 system-ui,sans-serif;color:#cdd2dc}
 canvas{display:block;width:100vw;height:100vh;cursor:grab;touch-action:none}canvas:active{cursor:grabbing}
-#hud{position:fixed;top:12px;left:14px;pointer-events:none;text-shadow:0 1px 3px #000}
-#hud b{font-size:15px;color:#fff}
-#hud small{opacity:.55}
-#leg{position:fixed;top:12px;right:14px;pointer-events:none;text-shadow:0 1px 3px #000}
-#leg .grid{display:grid;grid-template-columns:auto auto;gap:1px 16px}
-#leg .key{display:flex;align-items:center;gap:6px;opacity:.95}
-#leg .key i{width:14px;height:3px;border-radius:2px;flex:none}
-#leg .key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #fff;margin:0 2.5px}
+#hud,#leg{position:fixed;top:12px;pointer-events:none;text-shadow:0 1px 3px #000}
+#hud{left:14px}#hud b{font-size:15px;color:#fff}#hud small{opacity:.55}
+#leg{right:14px;display:grid;grid-template-columns:auto auto;gap:1px 16px}
+.key{display:flex;align-items:center;gap:6px;opacity:.95}
+.key i{width:14px;height:3px;border-radius:2px;flex:none}
+.key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #fff;margin:0 2.5px}
 #tl{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;
  background:#14141ccc;border:1px solid #ffffff22;border-radius:8px;padding:6px 12px;backdrop-filter:blur(4px)}
 #tl button{all:unset;cursor:pointer;width:16px;text-align:center;color:#fff}
@@ -19,28 +17,20 @@ canvas{display:block;width:100vw;height:100vh;cursor:grab;touch-action:none}canv
 #tl span{font-variant-numeric:tabular-nums;width:34px;color:#fff}
 #msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}
 </style>
-<canvas id=c></canvas>
+<canvas id=cv></canvas>
 <div id=hud><b>UK gas network</b><br><small>drag pan · right-drag / two-finger twist orbit · scroll zoom</small></div>
-<div id=leg>
- <div class=grid>
-  <div class=key><i style="background:#ef4b3d"></i>cast iron</div>
-  <div class=key><i style="background:#f28e2b"></i>spun iron</div>
-  <div class=key><i style="background:#edc948"></i>ductile iron</div>
-  <div class=key><i style="background:#ff2d9b"></i>m.p. ductile iron</div>
-  <div class=key><i style="background:#76b7b2"></i>steel</div>
-  <div class=key><i style="background:#b07aa1"></i>asbestos cement</div>
-  <div class=key><i style="background:#59a14f"></i>pvc</div>
-  <div class=key><i style="background:#9c755f"></i>lead</div>
-  <div class=key><i style="background:#4e93d0"></i>polyethylene</div>
-  <div class=key><i style="background:#4d5261"></i>unknown</div>
-  <div class=key><i class=dot></i>emergency</div>
-  <div class=key><i class=dot style="border-color:#8b8f99"></i>urgent</div>
- </div>
-</div>
+<div id=leg></div>
 <div id=tl><button id=play>⏸</button><input id=yrs type=range><span id=ylab></span></div>
 <div id=msg>loading…</div>
 <script type=module>
-const cv=document.getElementById('c'),msg=document.getElementById('msg')
+// element ids (cv, msg, leg, yrs, ylab, play) are globals via html named access
+// single source for material colours: legend chips + wgsl palette (tone = map.rs index)
+const MATS=[['ef4b3d','cast iron',0],['f28e2b','spun iron',1],['edc948','ductile iron',4],['ff2d9b','m.p. ductile iron'],
+ ['76b7b2','steel',5],['b07aa1','asbestos cement',2],['59a14f','pvc',6],['9c755f','lead',3],['4e93d0','polyethylene',7],['4d5261','unknown']]
+leg.innerHTML=MATS.map(([h,l])=>`<div class=key><i style=background:#${h}></i>${l}</div>`).join('')
+ +'<div class=key><i class=dot></i>emergency</div><div class=key><i class=dot style=border-color:#8b8f99></i>urgent</div>'
+const v3=h=>`vec3f(${[0,2,4].map(i=>(parseInt(h.substr(i,2),16)/255).toFixed(3))})`
+const PAL=MATS.filter(m=>m[2]>=0).sort((a,b)=>a[2]-b[2]).map(m=>v3(m[0]))
 const die=t=>{msg.textContent=t;throw t}
 if(!navigator.gpu)die('this browser has no webgpu')
 const dev=await(await navigator.gpu.requestAdapter())?.requestDevice()||die('no webgpu adapter')
@@ -60,14 +50,11 @@ const FOV=50*Math.PI/180,TAN=Math.tan(FOV/2)
 // far out the pitch clamp holds it top-down and the map behaves like the old 2d one;
 // past the detail threshold the clamp opens and the wheel dollies to the cursor.
 // boot framed on the whole footprint (full-uk view), not the config's home region
-const view0={cx:MINX+NCOLS*CELL/2,cy:MINY+NROWS*CELL/2,s:1.9/(Math.max(NCOLS,NROWS)*CELL)}
-const cam={t:[view0.cx,view0.cy],dist:1/(view0.s*TAN),az:0,pitch:0}
+const cam={t:[MINX+NCOLS*CELL/2,MINY+NROWS*CELL/2],dist:Math.max(NCOLS,NROWS)*CELL/1.9/TAN,az:0,pitch:0}
 const S=()=>1/(cam.dist*TAN)                          // ndc-per-km equivalent of the old zoom scale
 const maxPitch=()=>1.38*clamp(2*S()/TH-.6,0,1)
-const sub=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]],cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]
 const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],norm=a=>{const l=Math.hypot(...a);return[a[0]/l,a[1]/l,a[2]/l]}
-const mmul=(a,b)=>{const o=new Float32Array(16)
-  for(let c=0;c<4;c++)for(let r=0;r<4;r++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+r]*b[c*4+k];o[c*4+r]=s}return o}
 const eye=()=>{const h=cam.dist*Math.sin(cam.pitch),ez=hgtCPU(cam.t[0],cam.t[1])
   return[cam.t[0]+h*Math.sin(cam.az),cam.t[1]-h*Math.cos(cam.az),ez+cam.dist*Math.cos(cam.pitch)]}
 // roll-free up for any pitch (up=[0,0,1] degenerates exactly at top-down)
@@ -75,18 +62,18 @@ const up=()=>{const cp=Math.cos(cam.pitch),sp=Math.sin(cam.pitch)
   return[-Math.sin(cam.az)*cp,Math.cos(cam.az)*cp,sp]}
 // the camera basis every consumer shares — one place for the ground-height reference
 const basis=()=>{const e=eye(),ez=hgtCPU(cam.t[0],cam.t[1])
-  const z=norm(sub(e,[cam.t[0],cam.t[1],ez])),x=norm(cross(up(),z))
+  const z=norm([e[0]-cam.t[0],e[1]-cam.t[1],e[2]-ez]),x=norm(cross(up(),z))
   return{e,ez,x,y:cross(z,x),z}}
-const vpMat=()=>{const asp=cv.width/cv.height,n=cam.dist*.02,f=cam.dist*40+900,t=1/TAN
-  const{e,x,y,z}=basis()
-  const look=new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,e),-dot(y,e),-dot(z,e),1])
-  return mmul(new Float32Array([t/asp,0,0,0,0,t,0,0,0,0,f/(n-f),-1,0,0,f*n/(n-f),0]),look)}
+// view-projection: the perspective matrix is sparse, so fold it into look-at by hand
+const vpMat=()=>{const n=cam.dist*.02,f=cam.dist*40+900,A=f/(n-f),t=1/TAN,u=t*cv.height/cv.width
+  const{e,x,y,z}=basis(),c=i=>[u*x[i],t*y[i],A*z[i],-z[i]]
+  return new Float32Array([...c(0),...c(1),...c(2),-u*dot(x,e),-t*dot(y,e),A*(n-dot(z,e)),dot(z,e)])}
 // world x/y where the cursor ray (canvas px) meets the target-height ground plane
-const toWorld=(px,py)=>{const asp=cv.width/cv.height,{e,ez,x,y,z}=basis()
-  const nx=px/cv.width*2-1,ny=1-py/cv.height*2
-  const d=[nx*TAN*asp*x[0]+ny*TAN*y[0]-z[0],nx*TAN*asp*x[1]+ny*TAN*y[1]-z[1],nx*TAN*asp*x[2]+ny*TAN*y[2]-z[2]]
-  const s=d[2]<-1e-4?(ez-e[2])/d[2]:6*cam.dist                    // above horizon → clamp far
-  return[e[0]+Math.min(s,6*cam.dist)*d[0],e[1]+Math.min(s,6*cam.dist)*d[1]]}
+const toWorld=(px,py)=>{const{e,ez,x,y,z}=basis()
+  const nx=(px/cv.width*2-1)*TAN*cv.width/cv.height,ny=(1-py/cv.height*2)*TAN
+  const d=[0,1,2].map(i=>nx*x[i]+ny*y[i]-z[i])
+  const s=Math.min(d[2]<-1e-4?(ez-e[2])/d[2]:1/0,6*cam.dist)     // above horizon → clamp far
+  return[e[0]+s*d[0],e[1]+s*d[1]]}
 
 // ─── shaders: one module, everything shares the uniform + terrain samplers.
 // heights are u16 decimetres+1000 (fens sit below sea level); hgt() prefers a
@@ -104,22 +91,17 @@ struct V{vp:mat4x4f,ms:vec4f,tip:vec4f,tw:vec4f,tw2:vec4f};
 @group(0)@binding(2)var t1:texture_2d_array<u32>;
 @group(0)@binding(3)var<storage> lut:array<i32>;
 const MINX=${MINX}.0; const MINY=${MINY}.0; const CELL=${CELL}.0; const NC=${NCOLS}u; const EX=${EXAG};
-fn dm2km(e:f32)->f32{return (e-1000.)*EX*1e-4;}
+fn q1(i:vec2u,l:u32)->vec4f{return vec4f(vec4u(textureLoad(t1,i,l,0).r,textureLoad(t1,i+vec2u(1,0),l,0).r,textureLoad(t1,i+vec2u(0,1),l,0).r,textureLoad(t1,i+vec2u(1,1),l,0).r));}
+fn q0(i:vec2u)->vec4f{return vec4f(vec4u(textureLoad(t0,i,0).r,textureLoad(t0,i+vec2u(1,0),0).r,textureLoad(t0,i+vec2u(0,1),0).r,textureLoad(t0,i+vec2u(1,1),0).r));}
+fn bl(q:vec4f,r:vec2f)->f32{return (mix(mix(q.x,q.y,r.x),mix(q.z,q.w,r.x),r.y)-1000.)*EX*1e-4;}   // bilerp, dm → km
 fn hgt(p:vec2f)->f32{                                  // terrain height (km, exaggerated) at bng km
   let c=(p-vec2f(MINX,MINY))/CELL;
   let ci=vec2u(clamp(vec2i(floor(c)),vec2i(0),vec2i(${NCOLS-1},${NROWS-1})));
   let l=lut[ci.x+NC*ci.y];
-  if(l>=0){
-    let f=clamp((c-vec2f(ci))*${T1P-1}.,vec2f(0.),vec2f(${T1P-1}.-1e-3));
-    let i=vec2u(f); let r=f-vec2f(i); let ly=u32(l);
-    let a=mix(f32(textureLoad(t1,i,ly,0).r),f32(textureLoad(t1,i+vec2u(1,0),ly,0).r),r.x);
-    let b=mix(f32(textureLoad(t1,i+vec2u(0,1),ly,0).r),f32(textureLoad(t1,i+vec2u(1,1),ly,0).r),r.x);
-    return dm2km(mix(a,b,r.y));}
+  if(l>=0){let f=clamp((c-vec2f(ci))*${T1P-1}.,vec2f(0.),vec2f(${T1P-1}.-1e-3));
+    return bl(q1(vec2u(f),u32(l)),fract(f));}
   let g=clamp((p-vec2f(MINX,MINY))/${T0S},vec2f(0.),vec2f(${T0N-1}.-1e-3));
-  let i=vec2u(g); let r=g-vec2f(i);
-  let a=mix(f32(textureLoad(t0,i,0).r),f32(textureLoad(t0,i+vec2u(1,0),0).r),r.x);
-  let b=mix(f32(textureLoad(t0,i+vec2u(0,1),0).r),f32(textureLoad(t0,i+vec2u(1,1),0).r),r.x);
-  return dm2km(mix(a,b,r.y));}
+  return bl(q0(vec2u(g)),fract(g));}
 fn world(cell:u32,q:vec2u)->vec2f{                     // u16 cell-local record coords → bng km
   return vec2f(MINX,MINY)+vec2f(f32(cell%NC),f32(cell/NC))*CELL+vec2f(q)*(CELL/65535.);}
 const OFF=vec4f(2e9,0.,0.,1.);`
@@ -135,12 +117,10 @@ struct O{@builtin(position)p:vec4f,@location(0)@interpolate(flat)t:u32};
   let p=world(m.x,select(q.xy,q.zw,i==1u));
   return O(v.vp*vec4f(p,hgt(p)+.002,1.),tone);}
 @fragment fn fs(@location(0)@interpolate(flat)t:u32)->@location(0)vec4f{
-  if(PASS>.5){return vec4f(1.,.18,.61,1.);}            // mpdi highlight
+  if(PASS>.5){return vec4f(${v3('ff2d9b')},1.);}       // mpdi highlight
   let tone=t&0x7fu;
-  if(tone>7u){return vec4f(.30,.32,.38,.55);}          // unknown material
-  var pal=array<vec3f,8>(                              // categorical, risk-ordered; mirrors map.rs MATS + legend
-    vec3f(.937,.294,.239),vec3f(.949,.557,.169),vec3f(.690,.478,.631),vec3f(.612,.459,.373),
-    vec3f(.929,.788,.282),vec3f(.463,.718,.698),vec3f(.349,.631,.310),vec3f(.306,.576,.816));
+  if(tone>7u){return vec4f(${v3('4d5261')},.55);}      // unknown material
+  var pal=array<vec3f,8>(${PAL});                      // MATS by tone index
   return vec4f(pal[tone],.82);}`})
 // osm building wireframes: the 12 B edge record is the instance; 6 verts emit
 // base pair, roof pair, riser — z draped on the terrain sample.
@@ -155,8 +135,7 @@ const wmod=dev.createShaderModule({code:WG+`
 struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32};
 @vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f,@location(1)df:vec2f)->O{
   if(df.x>0.&&1970.+df.x/365.2425>v.ms.w){return O(OFF,vec2f(0.),0.,0.);}
-  var cn=array<vec2f,4>(vec2f(-1,-1),vec2f(1,-1),vec2f(-1,1),vec2f(1,1));
-  let q=cn[i];let hot=select(0.,1.,f32(inst)==v.ms.z);
+  let q=vec2f(vec2u(i&1u,i>>1u))*2.-1.;let hot=select(0.,1.,f32(inst)==v.ms.z);
   let c=v.vp*vec4f(pt,hgt(pt)+.004,1.);let r=v.ms.xy*select(1.,1.8,hot>.5);
   return O(vec4f(c.x+q.x*r.x*c.w,c.y+q.y*r.y*c.w,c.z,c.w),q,hot,df.y);}
 @fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32)->@location(0)vec4f{
@@ -184,37 +163,27 @@ const pmod=dev.createShaderModule({code:WG+`
 @group(1)@binding(0)var ts:sampler;@group(1)@binding(1)var tt:texture_2d<f32>;
 struct O{@builtin(position)p:vec4f,@location(0)uv:vec2f};
 @vertex fn vs(@builtin(vertex_index)i:u32)->O{
-  var cn=array<vec2f,4>(vec2f(0,0),vec2f(1,0),vec2f(0,1),vec2f(1,1));let c=cn[i];
+  let c=vec2f(vec2u(i&1u,i>>1u));
   return O(vec4f(mix(v.tip.xy,v.tip.zw,c),0,1),vec2f(c.x,1.-c.y));}
 @fragment fn fs(@location(0)uv:vec2f)->@location(0)vec4f{return textureSample(tt,ts,uv);}`})
 
-const bgl=dev.createBindGroupLayout({entries:[
- {binding:0,visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT,buffer:{}},
- {binding:1,visibility:GPUShaderStage.VERTEX,texture:{sampleType:'uint'}},
- {binding:2,visibility:GPUShaderStage.VERTEX,texture:{sampleType:'uint',viewDimension:'2d-array'}},
- {binding:3,visibility:GPUShaderStage.VERTEX,buffer:{type:'read-only-storage'}}]})
-const bglT=dev.createBindGroupLayout({entries:[{binding:0,visibility:GPUShaderStage.FRAGMENT,sampler:{}},
-  {binding:1,visibility:GPUShaderStage.FRAGMENT,texture:{}}]})
+const mkbgl=es=>dev.createBindGroupLayout({entries:es.map((e,binding)=>
+  ({binding,visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT,...e}))})
+const bgl=mkbgl([{buffer:{}},{texture:{sampleType:'uint'}},{texture:{sampleType:'uint',viewDimension:'2d-array'}},{buffer:{type:'read-only-storage'}}])
+const bglT=mkbgl([{sampler:{}},{texture:{}}])
 const blend={color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}}
 const layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]})
-const V12=[{arrayStride:12,stepMode:'instance',attributes:[                     // the shared 12 B record
-  {shaderLocation:0,offset:0,format:'uint16x4'},{shaderLocation:1,offset:8,format:'uint16x2'}]}]
-const line={topology:'line-list'}
-const mk=(m,c,bufs)=>dev.createRenderPipeline({layout,primitive:line,
-  vertex:{module:m,entryPoint:'vs',constants:c,buffers:bufs},
+const attrs=(arrayStride,a,b)=>[{arrayStride,stepMode:'instance',attributes:[
+  {shaderLocation:0,offset:0,format:a},{shaderLocation:1,offset:8,format:b}]}]
+const V12=attrs(12,'uint16x4','uint16x2')                                       // the shared 12 B record
+const mk=(m,c,buffers,topology='line-list',l=layout)=>dev.createRenderPipeline({layout:l,primitive:{topology},
+  vertex:{module:m,entryPoint:'vs',constants:c,buffers},
   fragment:{module:m,entryPoint:'fs',constants:c,targets:[{format:fmt,blend}]}})
-const pipe=mk(mod,{PASS:0},V12),pipeHL=mk(mod,{PASS:1},V12),bpipe=mk(bmod,undefined,V12)
-const twire=mk(tmod)
-const wpipe=dev.createRenderPipeline({layout,primitive:{topology:'triangle-strip'},
-  vertex:{module:wmod,entryPoint:'vs',buffers:[{arrayStride:16,stepMode:'instance',attributes:[
-    {shaderLocation:0,offset:0,format:'float32x2'},{shaderLocation:1,offset:8,format:'float32x2'}]}]},
-  fragment:{module:wmod,entryPoint:'fs',targets:[{format:fmt,blend}]}})
-const ppipe=dev.createRenderPipeline({layout:dev.createPipelineLayout({bindGroupLayouts:[bgl,bglT]}),
-  primitive:{topology:'triangle-strip'},vertex:{module:pmod,entryPoint:'vs'},
-  fragment:{module:pmod,entryPoint:'fs',targets:[{format:fmt,blend}]}})
-const bg=dev.createBindGroup({layout:bgl,entries:[{binding:0,resource:{buffer:uni}},
- {binding:1,resource:t0Tex.createView()},{binding:2,resource:t1Tex.createView()},
- {binding:3,resource:{buffer:lutBuf}}]})
+const pipe=mk(mod,{PASS:0},V12),pipeHL=mk(mod,{PASS:1},V12),bpipe=mk(bmod,undefined,V12),twire=mk(tmod)
+const wpipe=mk(wmod,undefined,attrs(16,'float32x2','float32x2'),'triangle-strip')
+const ppipe=mk(pmod,undefined,undefined,'triangle-strip',dev.createPipelineLayout({bindGroupLayouts:[bgl,bglT]}))
+const bg=dev.createBindGroup({layout:bgl,entries:[{buffer:uni},t0Tex.createView(),t1Tex.createView(),{buffer:lutBuf}]
+  .map((resource,binding)=>({binding,resource}))})
 
 const mkbuf=ab=>{const b=dev.createBuffer({size:Math.max(12,ab.byteLength),usage:GPUBufferUsage.VERTEX|GPUBufferUsage.COPY_DST})
   dev.queue.writeBuffer(b,0,ab);return b}
@@ -222,8 +191,8 @@ const mkbuf=ab=>{const b=dev.createBuffer({size:Math.max(12,ab.byteLength),usage
 // ─── layers: every heavy layer is (blob, idx) against the same grid — one paging
 // path, one lru per layer. terrain cells upload into the texture-array pool.
 const layers={}
-const mklayer=(id,blob,cnt,bytes,cap,gate,load,evict)=>{const off=new Uint32Array(N)
-  let a=0;for(let i=0;i<N;i++){off[i]=a;a+=cnt[i]}
+const mklayer=(id,blob,cnt,bytes,cap,gate,load,evict)=>{let a=0
+  const off=Uint32Array.from(cnt,c=>(a+=c)-c)          // exclusive prefix sum
   layers[id]={blob,cnt,off,bytes,cap,gate,load,evict,cells:new Map()}}
 let tick=0
 async function page(L){
@@ -258,27 +227,24 @@ const freeL=[...Array(T1L).keys()]
 let t0cpu=null
 const hgtCPU=(x,y)=>{                                  // mirrors hgt(); metres → km handled by caller
   const c=layers.terr?.cells.get(clamp((x-MINX)/CELL|0,0,NCOLS-1)+NCOLS*clamp((y-MINY)/CELL|0,0,NROWS-1))
-  let g,W,gx,gy
-  if(c?.cpu){g=c.cpu;W=T1P
-    gx=clamp(((x-MINX)/CELL%1)*(T1P-1),0,T1P-1.001);gy=clamp(((y-MINY)/CELL%1)*(T1P-1),0,T1P-1.001)}
-  else{if(!t0cpu)return 0;g=t0cpu;W=T0N
-    gx=clamp((x-MINX)/T0S,0,T0N-1.001);gy=clamp((y-MINY)/T0S,0,T0N-1.001)}
-  const x0=gx|0,y0=gy|0,dx=gx-x0,dy=gy-y0
-  const v=(i,j)=>g[Math.min(y0+j,W-1)*W+Math.min(x0+i,W-1)]
+  const[g,W,gx,gy]=c?.cpu?[c.cpu,T1P,((x-MINX)/CELL%1)*(T1P-1),((y-MINY)/CELL%1)*(T1P-1)]
+    :[t0cpu,T0N,(x-MINX)/T0S,(y-MINY)/T0S]
+  if(!g)return 0
+  const x0=clamp(gx,0,W-1.001),y0=clamp(gy,0,W-1.001),dx=x0%1,dy=y0%1
+  const v=(i,j)=>g[Math.min((y0|0)+j,W-1)*W+Math.min((x0|0)+i,W-1)]
   return ((v(0,0)*(1-dx)+v(1,0)*dx)*(1-dy)+(v(0,1)*(1-dx)+v(1,1)*dx)*dy-1000)*EXAG*1e-4}
 
 // ─── timeline: the laid-year clock. autoplays 20 s on load, scrubbable, ends steady.
-const yrs=document.getElementById('yrs'),ylab=document.getElementById('ylab'),play=document.getElementById('play')
-const[Y0,Y1]=meta.yr;let yr=Y0,playing=true
+const[Y0,Y1]=meta.yr;let yr=Y0,playing=true,pt0=0
 yrs.min=Y0;yrs.max=Y1+1;yrs.step=.1;yrs.value=Y0
 const setYr=v=>{yr=v;yrs.value=v;ylab.textContent=Math.min(v|0,Y1);draw()}
-yrs.oninput=()=>{playing=false;play.textContent='▶';setYr(+yrs.value)}
-play.onclick=()=>{playing=!playing;play.textContent=playing?'⏸':'▶'
+const setPlay=p=>{playing=p;play.textContent=p?'⏸':'▶'}
+yrs.oninput=()=>{setPlay(false);setYr(+yrs.value)}
+play.onclick=()=>{setPlay(!playing)
   if(playing){if(yr>Y1)yr=Y0;pt0=0;requestAnimationFrame(anim)}}
-let pt0=0
 function anim(t){if(!playing)return
   if(pt0)setYr(Math.min(yr+(t-pt0)/2e4*(Y1+1-Y0),Y1+1));pt0=t
-  if(yr>Y1){playing=false;play.textContent='▶';return}
+  if(yr>Y1)return setPlay(false)
   requestAnimationFrame(anim)}
 
 let sel=-1                                             // picked incident index (-1 = none)
@@ -319,9 +285,8 @@ function rect(){const pts=[[0,0],[cv.width,0],[0,cv.height],[cv.width,cv.height]
 
 function draw(){
   const s=S(),vp=vpMat()
-  let t=[0,0,0,0]                                      // tooltip quad in ndc, bottom-left corner
-  if(tipTex){const x=14*dpr,y=(innerHeight-14)*dpr
-    t=[x/cv.width*2-1,1-y/cv.height*2,(x+tipW)/cv.width*2-1,1-(y-tipH)/cv.height*2]}
+  const tx=14*dpr,ty=(innerHeight-14)*dpr              // tooltip quad in ndc, bottom-left corner
+  const t=tipTex?[tx/cv.width*2-1,1-ty/cv.height*2,(tx+tipW)/cv.width*2-1,1-(ty-tipH)/cv.height*2]:[0,0,0,0]
   // terrain wire: strided posts over the full ground footprint (not the clamped
   // paging rect — a pitched horizon must still get relief), ~14 px spacing near
   // the target, stride widened to keep within the 500-post budget
@@ -362,9 +327,7 @@ async function pick(x,y){                              // incidents first, then 
   if(S()<TH)return
   const vp=vpMat();let bd=9*dpr
   // cheap world-space cull before the projection: the frustum footprint + margin
-  const fp=[[0,0],[cv.width,0],[0,cv.height],[cv.width,cv.height]].map(p=>toWorld(p[0],p[1]))
-  const bx0=Math.min(...fp.map(p=>p[0]))-.1,bx1=Math.max(...fp.map(p=>p[0]))+.1
-  const by0=Math.min(...fp.map(p=>p[1]))-.1,by1=Math.max(...fp.map(p=>p[1]))+.1
+  const[bx0,bx1,by0,by1]=rect()[4].map((v,i)=>v+(i%2?.1:-.1))
   sel=-1
   if(wk)for(let i=0;i<wkN;i++){
     const wx=wk[i*4],wy=wk[i*4+1]
