@@ -1,0 +1,32 @@
+name: Deploy
+
+# publishes the self-contained webgpu frontend to pages (ltrg.co.uk/gdn-gis);
+# the heavy range-served artefacts live in the gdn-gis s3 archive, not here.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy-pages:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Prepare site
+        run: |
+          mkdir -p _site
+          cp web/map.html _site/index.html
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v5

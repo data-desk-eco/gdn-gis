@@ -48,7 +48,8 @@ const ctx=cv.getContext('webgpu'),fmt=navigator.gpu.getPreferredCanvasFormat()
 ctx.configure({device:dev,format:fmt,alphaMode:'opaque'})
 
 const clamp=(v,a,b)=>v<a?a:v>b?b:v
-const D='../dist/'                                    // artefacts live in the gitignored dist dir
+const LOCAL=/^(localhost|127\.|\[?::1)/.test(location.hostname)   // dev serves dist/ locally; prod range-reads the s3 archive
+const D=LOCAL?'../dist/':'https://gdn-gis-916338043936.s3.amazonaws.com/'
 const meta=await(await fetch(D+'map.json')).json()    // grid + view + thresholds, written by src/map.rs
 const MINX=meta.minx,MINY=meta.miny,CELL=meta.cell,NCOLS=meta.ncols,NROWS=meta.nrows,N=NCOLS*NROWS
 const TH=meta.detail_scale,BTH=meta.bldg_scale,YB=meta.yr0
@@ -148,7 +149,7 @@ const bmod=dev.createShaderModule({code:WG+`
   let p=world(m.x,select(q.xy,q.zw,i==1u||i==3u));
   let z=hgt(p)+select(f32(m.y>>8u),f32(m.y&0xffu),i>=2u&&i!=4u)*5e-4;   // half-metres → km
   return v.vp*vec4f(p,z,1.);}
-@fragment fn fs()->@location(0)vec4f{return vec4f(.42,.47,.55,.34);}`})
+@fragment fn fs()->@location(0)vec4f{return vec4f(.62,.64,.68,.55);}`})
 // street-manager incident circles: fixed screen-size instanced hollow rings, draped
 const wmod=dev.createShaderModule({code:WG+`
 struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32};
