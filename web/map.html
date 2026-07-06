@@ -1,15 +1,17 @@
 <!doctype html><html lang=en><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>UK gas network</title><link rel=icon href=data:,><style>
-html,body{margin:0;height:100%;background:#0b0b10;overflow:hidden;font:13px/1.4 system-ui,sans-serif;color:#cdd2dc}canvas{display:block;width:100vw;height:100vh;cursor:grab;touch-action:none}canvas:active{cursor:grabbing}
-#hud,#leg{position:fixed;top:12px;pointer-events:none;text-shadow:0 1px 3px #000}#hud{left:14px}#hud b{font-size:15px;color:#fff}#hud small{opacity:.55}#leg{right:14px;display:grid;grid-template-columns:auto auto;gap:1px 16px}
-.key{display:flex;align-items:center;gap:6px;opacity:.95}.key i{width:14px;height:3px;border-radius:2px;flex:none}.key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #fff;margin:0 2.5px}#msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}#tp{position:fixed;left:14px;bottom:14px;pointer-events:none;text-shadow:0 1px 3px #000}#tp:empty{display:none}#tp b{color:#fff}#tp span{color:#cdd2dc}
-#tl{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;background:#14141ccc;border:1px solid #ffffff22;border-radius:8px;padding:6px 12px;backdrop-filter:blur(4px)}#tl button{all:unset;cursor:pointer;width:16px;text-align:center;color:#fff}#tl input{width:min(34vw,300px);accent-color:#4e93d0}#tl span{font-variant-numeric:tabular-nums;width:34px;color:#fff}</style>
+html,body{margin:0;height:100%;background:#fff;overflow:hidden;font:13px/1.4 system-ui,sans-serif;color:#444a55}canvas{display:block;width:100vw;height:100vh;cursor:grab;touch-action:none}canvas:active{cursor:grabbing}
+#hud,#leg{position:fixed;top:12px;pointer-events:none;text-shadow:0 1px 3px #fff}#hud{left:14px}#hud b{font-size:15px;color:#111}#hud small{opacity:.55}#leg{right:14px;display:grid;grid-template-columns:auto auto;gap:1px 16px;pointer-events:auto;cursor:pointer;user-select:none}
+.key{display:flex;align-items:center;gap:6px;opacity:.95}.key.off{opacity:.25}.key i{width:14px;height:3px;border-radius:2px;flex:none}.key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #222;margin:0 2.5px}#msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}#tp{position:fixed;left:14px;bottom:14px;pointer-events:none;text-shadow:0 1px 3px #fff}#tp:empty{display:none}#tp b{color:#111}#tp span{color:#444a55}
+#tl{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;background:#ffffffd0;border:1px solid #00000022;border-radius:8px;padding:6px 12px;backdrop-filter:blur(4px)}#tl button{all:unset;cursor:pointer;width:16px;text-align:center;color:#111}#tl input{width:min(34vw,300px);accent-color:#4e93d0}#tl span{font-variant-numeric:tabular-nums;width:34px;color:#111}</style>
 <canvas id=cv></canvas>
 <div id=hud><b>UK gas network</b><br><small>drag pan · right-drag / two-finger twist orbit · scroll zoom</small></div>
 <div id=leg></div><div id=tl><button id=play>⏸</button><input id=yrs type=range><span id=ylab></span></div><div id=msg>loading…</div><div id=tp></div>
 <script type=module>
 const MATS=[['ef4b3d','cast iron',0],['f28e2b','spun iron',1],['edc948','ductile iron',4],['ff2d9b','m.p. ductile iron'],['76b7b2','steel',5],['b07aa1','asbestos cement',2],['59a14f','pvc',6],['9c755f','lead',3],['4e93d0','polyethylene',7],['4d5261','unknown']]
-leg.innerHTML=MATS.map(([h,l])=>`<div class=key><i style=background:#${h}></i>${l}</div>`).join('')+'<div class=key><i class=dot></i>emergency</div><div class=key><i class=dot style=border-color:#8b8f99></i>urgent</div>'
+let mask=4095
+leg.innerHTML=MATS.map(([h,l,b],i)=>`<div class=key data-b=${b??(i>3?8:9)}><i style=background:#${h}></i>${l}</div>`).join('')+'<div class=key data-b=10><i class=dot></i>emergency</div><div class=key data-b=11><i class=dot style=border-color:#8b8f99></i>urgent</div>'
+leg.onclick=e=>{const k=e.target.closest('.key');if(k){mask^=1<<k.dataset.b;k.classList.toggle('off');draw()}}
 const v3=h=>`vec3f(${[0,2,4].map(i=>(parseInt(h.substr(i,2),16)/255).toFixed(3))})`,PAL=MATS.filter(m=>m[2]>=0).sort((a,b)=>a[2]-b[2]).map(m=>v3(m[0]))
 const die=t=>{msg.textContent=t;throw t}
 if(!navigator.gpu)die('this browser has no webgpu')
@@ -37,17 +39,17 @@ fn hgt(p:vec2f)->f32{let c=(p-vec2f(${MX},${MY}))/${CELL};let i=vec2u(clamp(vec2
 fn world(c:u32,q:vec2u)->vec2f{return vec2f(${MX},${MY})+vec2f(f32(c%${NC}u),f32(c/${NC}u))*${CELL}+vec2f(q)*${CELL/65535};}`
 const mod=dev.createShaderModule({code:WG+`override PASS:f32=0.;struct O{@builtin(position)p:vec4f,@location(0)@interpolate(flat)t:u32};
 @vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->O{
-let yr=m.y>>8u;let hide=select(v.ms.w<=${Y1}.,f32(yr)+${M.yr0}.>v.ms.w,yr>0u);if((PASS>.5&&(m.y&0x80u)==0u)||hide){return O(OFF,0u);}
+let yr=m.y>>8u;let bit=select(min(m.y&0x7fu,8u),9u,PASS>.5);let hide=select(v.ms.w<=${Y1}.,f32(yr)+${M.yr0}.>v.ms.w,yr>0u)||((u32(v.tw2.y)>>bit)&1u)==0u;if((PASS>.5&&(m.y&0x80u)==0u)||hide){return O(OFF,0u);}
 let p=world(m.x,select(q.xy,q.zw,i==1u));return O(v.vp*vec4f(p,hgt(p)+.002,1.),m.y&0xffu);}
 @fragment fn fs(@location(0)@interpolate(flat)t:u32)->@location(0)vec4f{if(PASS>.5){return vec4f(${v3('ff2d9b')},1.);}let n=t&0x7fu;if(n>7u){return vec4f(${v3('4d5261')},.55);}var pal=array<vec3f,8>(${PAL});return vec4f(pal[n],.82);}`})
 const bmod=dev.createShaderModule({code:WG+`@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->@builtin(position)vec4f{
 let p=world(m.x,select(q.xy,q.zw,i==1u||i==3u));return v.vp*vec4f(p,hgt(p)+select(f32(m.y>>8u),f32(m.y&0xffu),i>=2u&&i!=4u)*5e-4,1.);}
-@fragment fn fs()->@location(0)vec4f{return vec4f(.62,.64,.68,.55);}`})
+@fragment fn fs()->@location(0)vec4f{return vec4f(.45,.47,.52,.5);}`})
 const wmod=dev.createShaderModule({code:WG+`struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32};
-@vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f,@location(1)df:vec2f)->O{if(df.x>0.&&1970.+df.x/365.2425>v.ms.w){return O(OFF,vec2f(0.),0.,0.);}
+@vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f,@location(1)df:vec2f)->O{if((df.x>0.&&1970.+df.x/365.2425>v.ms.w)||((u32(v.tw2.y)>>select(11u,10u,df.y>.5))&1u)==0u){return O(OFF,vec2f(0.),0.,0.);}
 let q=vec2f(vec2u(i&1u,i>>1u))*2.-1.;let hot=select(0.,1.,f32(inst)==v.ms.z);let c=v.vp*vec4f(pt,hgt(pt)+.004,1.);let r=v.ms.xy*select(1.,1.8,hot>.5);return O(vec4f(c.xy+q*r*c.w,c.zw),q,hot,df.y);}
 @fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32)->@location(0)vec4f{let a=smoothstep(.13,.07,abs(length(q)-.89));if(a<.01){discard;}
-return vec4f(select(select(vec3f(.55,.58,.64),vec3f(1.),em>.5),vec3f(.29,.84,1.),hot>.5),a*.95);}`})
+return vec4f(select(select(vec3f(.55,.58,.64),vec3f(.07,.07,.07),em>.5),vec3f(0.,.55,.9),hot>.5),a*.95);}`})
 const tmod=dev.createShaderModule({code:WG+`@vertex fn vs(@builtin(vertex_index)vi:u32,@builtin(instance_index)li:u32)->@builtin(position)vec4f{
 let k=vi>>1u;let st=v.tw.z;let nw=u32(v.tw.w);let nh=u32(v.tw2.x);var g:vec2f;
 if(li<nh){if(k+1u>=nw){return OFF;}g=v.tw.xy+st*vec2f(f32(k+(vi&1u)),f32(li));}else{if(k+1u>=nh){return OFF;}g=v.tw.xy+st*vec2f(f32(li-nh),f32(k+(vi&1u)));}let p=vec2f(${MX},${MY})+g*${T0S};return v.vp*vec4f(p,hgt(p),1.);}
@@ -89,8 +91,8 @@ function rect(){const pts=[[0,0],[cv.width,0],[0,cv.height],[cv.width,cv.height]
 function draw(){const s=S(),vp=vpMat(),bb=rect()[4]
  const gx=clamp((bb[0]-MX)/T0S,0,T0N-1),gX=clamp((bb[1]-MX)/T0S,0,T0N-1),gy=clamp((bb[2]-MY)/T0S,0,T0N-1),gY=clamp((bb[3]-MY)/T0S,0,T0N-1)
  const st=Math.max(.05,14/(T0S*s*cv.height/2),(gX-gx)/499,(gY-gy)/499),i0=Math.floor(gx/st)*st,j0=Math.floor(gy/st)*st,nw=Math.ceil((gX-i0)/st)+1,nh=Math.ceil((gY-j0)/st)+1
- Q.writeBuffer(uni,0,new Float32Array([...vp,RPX*2/cv.width,RPX*2/cv.height,sel,yr>Y1?9e3:yr,i0,j0,st,nw,nh,0,0,cam.p]))
- const e=dev.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),clearValue:{r:.043,g:.043,b:.063,a:1},loadOp:'clear',storeOp:'store'}]});p.setBindGroup(0,bg)
+ Q.writeBuffer(uni,0,new Float32Array([...vp,RPX*2/cv.width,RPX*2/cv.height,sel,yr>Y1?9e3:yr,i0,j0,st,nw,nh,mask,0,cam.p]))
+ const e=dev.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),clearValue:{r:1,g:1,b:1,a:1},loadOp:'clear',storeOp:'store'}]});p.setBindGroup(0,bg)
  if(cam.p>.02||s>=TH){p.setPipeline(twire);p.draw(2*Math.max(nw,nh),nw+nh)}
  const B=layers.bldg;if(B&&s>=BTH){p.setPipeline(bpipe);for(const o of B.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(6,o.n)}}
  for(const pl of[pipe,pipeHL]){p.setPipeline(pl);if(baseN){p.setVertexBuffer(0,baseVB);p.draw(2,baseN)}
@@ -102,7 +104,7 @@ const bCache=new Map()
 async function pick(x,y){if(S()<TH)return
  const vp=vpMat(),[bx0,bx1,by0,by1]=rect()[4].map((v,i)=>v+(i%2?.1:-.1));let bd=9*dpr;sel=-1
  if(wk)for(let i=0;i<wkN;i++){const wx=wk[i*4],wy=wk[i*4+1]
-  if(wx<bx0||wx>bx1||wy<by0||wy>by1||(wk[i*4+2]>0&&1970+wk[i*4+2]/365.2425>yr&&yr<=Y1))continue
+  if(wx<bx0||wx>bx1||wy<by0||wy>by1||!(mask>>(wk[i*4+3]>.5?10:11)&1)||(wk[i*4+2]>0&&1970+wk[i*4+2]/365.2425>yr&&yr<=Y1))continue
   const p=proj(vp,wx,wy,hgtC(wx,wy)+.004);if(!p)continue;const d=Math.hypot(p[0]-x,p[1]-y);if(d<bd){bd=d;sel=i}}
  if(sel>=0){det??=(await(await fetch(D+'works.tsv')).text()).split('\n');const[permit,cat,status,street,town,auth,start,end]=det[sel].split('\t')
   return tip([`${street||'(no street)'}${town?', '+town:''}`,`${cat} · ${status.toLowerCase()}`,start+(end&&end!==start?' → '+end:''),`${auth.toLowerCase()} · permit ${permit}`])}
