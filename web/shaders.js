@@ -93,8 +93,10 @@ struct O{@builtin(position)p:vec4f,@location(0)@interpolate(flat)t:u32};
 @vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:u32)->O{
   let cell=m&0x3ffffu;let tn=(m>>18u)&0xfu;let yr=m>>23u;
   let bit=select(select(min(tn,8u),12u,tn==9u),9u,PASS>.5);
-  let hide=select(v.ms.w<=${Y1}.,f32(yr)+${M.yr0}.>v.ms.w,yr>0u)
-    ||select(v.tw2.z>0.,f32(yr)+${M.yr0}.<v.tw2.z,yr>0u)
+  // dated segments show inside the [lo, clock] year window; undated (yr 0 —
+  // nts backbone, the rare pipe the gpi join couldn't date) is always-visible
+  // context rather than dumped in at the final frame
+  let hide=(yr>0u&&(f32(yr)+${M.yr0}.>v.ms.w||f32(yr)+${M.yr0}.<v.tw2.z))
     ||((u32(v.tw2.y)>>bit)&1u)==0u;
   if((PASS>.5&&(m&0x400000u)==0u)||hide){return O(OFF,0u);}
   let A=cellWorld(cell,q.xy);let B=cellWorld(cell,q.zw);
