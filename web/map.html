@@ -41,7 +41,9 @@ fn world(c:u32,q:vec2u)->vec2f{return vec2f(${MX},${MY})+vec2f(f32(c%${NC}u),f32
 const mod=dev.createShaderModule({code:WG+`override PASS:f32=0.;struct O{@builtin(position)p:vec4f,@location(0)@interpolate(flat)t:u32};
 @vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->O{
 let yr=m.y>>8u;let bit=select(min(m.y&0x7fu,8u),9u,PASS>.5);let hide=select(v.ms.w<=${Y1}.,f32(yr)+${M.yr0}.>v.ms.w,yr>0u)||((u32(v.tw2.y)>>bit)&1u)==0u;if((PASS>.5&&(m.y&0x80u)==0u)||hide){return O(OFF,0u);}
-let p=world(m.x,select(q.xy,q.zw,i==1u));return O(v.vp*vec4f(p,hgt(p)+.002,1.),m.y&0xffu);}
+let A=world(m.x,q.xy);let B=world(m.x,q.zw);let ca=v.vp*vec4f(A,hgt(A)+.002,1.);let cb=v.vp*vec4f(B,hgt(B)+.002,1.);
+let c=select(ca,cb,i>1u);let d=normalize(cb.xy/cb.w-ca.xy/ca.w);
+return O(vec4f(c.xy+vec2f(-d.y,d.x)*(f32(i&1u)*2.-1.)*v.ms.xy*${(1/4.5).toFixed(4)}*c.w,c.zw),m.y&0xffu);}
 @fragment fn fs(@location(0)@interpolate(flat)t:u32)->@location(0)vec4f{if(PASS>.5){return vec4f(${v3('ff2d9b')},1.);}let n=t&0x7fu;if(n>7u){return vec4f(${v3('4d5261')},.55);}var pal=array<vec3f,8>(${PAL});return vec4f(pal[n],.82);}`})
 const bmod=dev.createShaderModule({code:WG+`@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->@builtin(position)vec4f{
 let p=world(m.x,select(q.xy,q.zw,i==1u||i==3u));return v.vp*vec4f(p,hgt(p)+select(f32(m.y>>8u),f32(m.y&0xffu),i>=2u&&i!=4u)*5e-4,1.);}
@@ -61,7 +63,7 @@ const bgl=dev.createBindGroupLayout({entries:[{buffer:{}},{texture:{sampleType:'
 const blend={color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}},layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]})
 const attrs=(arrayStride,a,b)=>[{arrayStride,stepMode:'instance',attributes:[{shaderLocation:0,offset:0,format:a},{shaderLocation:1,offset:8,format:b}]}],V12=attrs(12,'uint16x4','uint16x2')
 const mk=(m,c,buffers,topology='line-list')=>dev.createRenderPipeline({layout,primitive:{topology},vertex:{module:m,entryPoint:'vs',constants:c,buffers},fragment:{module:m,entryPoint:'fs',constants:c,targets:[{format:fmt,blend}]}})
-const pipe=mk(mod,{PASS:0},V12),pipeHL=mk(mod,{PASS:1},V12),bpipe=mk(bmod,undefined,V12),twire=mk(tmod),cpipe=mk(cmod,undefined,[{arrayStride:8,stepMode:'instance',attributes:[{shaderLocation:0,offset:0,format:'uint16x4'}]}]),wpipe=mk(wmod,undefined,attrs(16,'float32x2','float32x2'),'triangle-strip')
+const pipe=mk(mod,{PASS:0},V12,'triangle-strip'),pipeHL=mk(mod,{PASS:1},V12,'triangle-strip'),bpipe=mk(bmod,undefined,V12),twire=mk(tmod),cpipe=mk(cmod,undefined,[{arrayStride:8,stepMode:'instance',attributes:[{shaderLocation:0,offset:0,format:'uint16x4'}]}]),wpipe=mk(wmod,undefined,attrs(16,'float32x2','float32x2'),'triangle-strip')
 const bg=dev.createBindGroup({layout:bgl,entries:[{buffer:uni},t0T.createView(),t1T.createView(),{buffer:lutB}].map((resource,binding)=>({binding,resource}))})
 const mkbuf=ab=>{const b=dev.createBuffer({size:Math.max(12,ab.byteLength),usage:BU.VERTEX|BU.COPY_DST});Q.writeBuffer(b,0,ab);return b}
 const layers={},mklayer=(id,blob,cnt,bytes,cap,gate,load,evict)=>{let a=0;layers[id]={blob,cnt,off:Uint32Array.from(cnt,c=>(a+=c)-c),bytes,cap,gate,load,evict,cells:new Map()}}
@@ -99,8 +101,8 @@ function draw(){const s=S(),vp=vpMat(),bb=rect()[4]
  if(coastN){p.setPipeline(cpipe);p.setVertexBuffer(0,coastVB);p.draw(2,coastN)}
  if(cam.p>.02||s>=TH){p.setPipeline(twire);p.draw(2*Math.max(nw,nh),nw+nh)}
  const B=layers.bldg;if(B&&s>=BTH){p.setPipeline(bpipe);for(const o of B.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(6,o.n)}}
- for(const pl of[pipe,pipeHL]){p.setPipeline(pl);if(baseN&&s<TH){p.setVertexBuffer(0,baseVB);p.draw(2,baseN)}
-  if(layers.pipe&&s>=TH)for(const o of layers.pipe.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(2,o.n)}}
+ for(const pl of[pipe,pipeHL]){p.setPipeline(pl);if(baseN&&s<TH){p.setVertexBuffer(0,baseVB);p.draw(4,baseN)}
+  if(layers.pipe&&s>=TH)for(const o of layers.pipe.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(4,o.n)}}
  if(wkN&&s>=TH){p.setPipeline(wpipe);p.setVertexBuffer(0,wkVB);p.draw(4,wkN)}p.end();Q.submit([e.finish()])
  let li=0;const hits=[]
  for(const[x,y,thr,n]of places){if(thr>=s||li===40)break
