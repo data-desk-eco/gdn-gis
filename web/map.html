@@ -33,7 +33,7 @@ const vpMat=()=>{const n=cam.d*.02,A=1/(n/(cam.d*40+900)-1),t=1/TAN,u=t*cv.heigh
 const toWorld=(px,py)=>{const{e,ez,x,y,z}=basis(),nx=(px/cv.width*2-1)*TAN*cv.width/cv.height,ny=(1-py/cv.height*2)*TAN,d=[0,1,2].map(i=>nx*x[i]+ny*y[i]-z[i]),s=Math.min(d[2]<-1e-4?(ez-e[2])/d[2]:1/0,6*cam.d)
  return[e[0]+s*d[0],e[1]+s*d[1]]}
 const ld=(t,l)=>`vec4f(vec4u(${[[0,0],[1,0],[0,1],[1,1]].map(o=>`textureLoad(${t},i+vec2u(${o}),${l}0).r`)}))`
-const WG=`struct V{vp:mat4x4f,ms:vec4f,tw:vec4f,tw2:vec4f};@group(0)@binding(0)var<uniform> v:V;@group(0)@binding(1)var t0:texture_2d<u32>;@group(0)@binding(2)var t1:texture_2d_array<u32>;@group(0)@binding(3)var<storage> lut:array<i32>;const OFF=vec4f(2e9,0.,0.,1.);
+const WG=`struct V{vp:mat4x4f,ms:vec4f,tw:vec4f,tw2:vec4f,cd:f32};@group(0)@binding(0)var<uniform> v:V;@group(0)@binding(1)var t0:texture_2d<u32>;@group(0)@binding(2)var t1:texture_2d_array<u32>;@group(0)@binding(3)var<storage> lut:array<i32>;const OFF=vec4f(2e9,0.,0.,1.);
 fn q1(i:vec2u,l:u32)->vec4f{return ${ld('t1','l,')};}fn q0(i:vec2u)->vec4f{return ${ld('t0','')};}
 fn bl(q:vec4f,r:vec2f)->f32{return (mix(mix(q.x,q.y,r.x),mix(q.z,q.w,r.x),r.y)-1000.)*${EX*1e-4};}
 fn hgt(p:vec2f)->f32{let c=(p-vec2f(${MX},${MY}))/${CELL};let i=vec2u(clamp(vec2i(floor(c)),vec2i(0),vec2i(${NC-1},${NR-1})));let l=lut[i.x+${NC}u*i.y];if(l>=0){let f=clamp((c-vec2f(i))*${T1P-1}.,vec2f(0.),vec2f(${T1P-1-.001}));return bl(q1(vec2u(f),u32(l)),fract(f));}let g=clamp((p-vec2f(${MX},${MY}))/${T0S},vec2f(0.),vec2f(${T0N-1-.001}));return bl(q0(vec2u(g)),fract(g));}
@@ -48,11 +48,12 @@ return O(vec4f(c.xy+vec2f(-d.y,d.x)*(f32(i&1u)*2.-1.)*v.ms.xy*${(1/4.5).toFixed(
 const bmod=dev.createShaderModule({code:WG+`@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->@builtin(position)vec4f{
 let p=world(m.x,select(q.xy,q.zw,i==1u||i==3u));return v.vp*vec4f(p,hgt(p)+select(f32(m.y>>8u),f32(m.y&0xffu),i>=2u&&i!=4u)*5e-4,1.);}
 @fragment fn fs()->@location(0)vec4f{return vec4f(.45,.47,.52,.5);}`})
-const wmod=dev.createShaderModule({code:WG+`struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32};
-@vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f,@location(1)df:vec2f)->O{if((df.x>0.&&1970.+df.x/365.2425>v.ms.w)||select(v.tw2.z>0.,1970.+df.x/365.2425<v.tw2.z,df.x>0.)||((u32(v.tw2.y)>>select(11u,10u,df.y>.5))&1u)==0u){return O(OFF,vec2f(0.),0.,0.);}
-let q=vec2f(vec2u(i&1u,i>>1u))*2.-1.;let hot=select(0.,1.,f32(inst)==v.ms.z);let c=v.vp*vec4f(pt,hgt(pt)+.004,1.);let r=v.ms.xy*select(1.,1.8,hot>.5);return O(vec4f(c.xy+q*r*c.w,c.zw),q,hot,df.y);}
-@fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32)->@location(0)vec4f{let a=smoothstep(.13,.07,abs(length(q)-.89));if(a<.01){discard;}
-return vec4f(select(select(vec3f(.55,.58,.64),vec3f(.07,.07,.07),em>.5),vec3f(0.,.55,.9),hot>.5),a*.95);}`})
+const wmod=dev.createShaderModule({code:WG+`struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32,@location(3)@interpolate(flat)fd:f32};
+@vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f,@location(1)df:vec2f)->O{if((df.x>0.&&1970.+df.x/365.2425>v.ms.w)||select(v.tw2.z>0.,1970.+df.x/365.2425<v.tw2.z,df.x>0.)||((u32(v.tw2.y)>>select(11u,10u,df.y>.5))&1u)==0u){return O(OFF,vec2f(0.),0.,0.,0.);}
+let q=vec2f(vec2u(i&1u,i>>1u))*2.-1.;let hot=select(0.,1.,f32(inst)==v.ms.z);let c=v.vp*vec4f(pt,hgt(pt)+.004,1.);let fd=1.-smoothstep(2.5,4.,c.w/v.cd);if(fd<.01){return O(OFF,vec2f(0.),0.,0.,0.);}
+let r=v.ms.xy*select(1.,1.8,hot>.5);return O(vec4f(c.xy+q*r*c.w,c.zw),q,hot,df.y,fd);}
+@fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32,@location(3)@interpolate(flat)fd:f32)->@location(0)vec4f{let a=smoothstep(.13,.07,abs(length(q)-.89));if(a<.01){discard;}
+return vec4f(select(select(vec3f(.55,.58,.64),vec3f(.07,.07,.07),em>.5),vec3f(0.,.55,.9),hot>.5),a*fd*.95);}`})
 const cmod=dev.createShaderModule({code:WG+`@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u)->@builtin(position)vec4f{return v.vp*vec4f(vec2f(select(q.xy,q.zw,i==1u))*.02,.001,1.);}
 @fragment fn fs()->@location(0)vec4f{return vec4f(.42,.55,.65,.6);}`})
 const tmod=dev.createShaderModule({code:WG+`@vertex fn vs(@builtin(vertex_index)vi:u32,@builtin(instance_index)li:u32)->@builtin(position)vec4f{
@@ -98,7 +99,7 @@ function rect(){const pts=[[0,0],[cv.width,0],[0,cv.height],[cv.width,cv.height]
 function draw(){const s=S(),vp=vpMat(),bb=rect()[4]
  const gx=clamp((bb[0]-MX)/T0S,0,T0N-1),gX=clamp((bb[1]-MX)/T0S,0,T0N-1),gy=clamp((bb[2]-MY)/T0S,0,T0N-1),gY=clamp((bb[3]-MY)/T0S,0,T0N-1)
  const st=Math.max(.05,14/(T0S*s*cv.height/2),(gX-gx)/499,(gY-gy)/499),i0=Math.floor(gx/st)*st,j0=Math.floor(gy/st)*st,nw=Math.ceil((gX-i0)/st)+1,nh=Math.ceil((gY-j0)/st)+1
- Q.writeBuffer(uni,0,new Float32Array([...vp,RPX*2/cv.width,RPX*2/cv.height,sel,yr>Y1?9e3:yr,i0,j0,st,nw,nh,mask,lo>Y0?lo:0,cam.p]))
+ Q.writeBuffer(uni,0,new Float32Array([...vp,RPX*2/cv.width,RPX*2/cv.height,sel,yr>Y1?9e3:yr,i0,j0,st,nw,nh,mask,lo>Y0?lo:0,cam.p,cam.d]))
  const e=dev.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),clearValue:{r:1,g:1,b:1,a:1},loadOp:'clear',storeOp:'store'}]});p.setBindGroup(0,bg)
  if(coastN){p.setPipeline(cpipe);p.setVertexBuffer(0,coastVB);p.draw(2,coastN)}
  if(cam.p>.02||s>=TH){p.setPipeline(twire);p.draw(2*Math.max(nw,nh),nw+nh)}
@@ -113,13 +114,13 @@ function draw(){const s=S(),vp=vpMat(),bb=rect()[4]
   hits.push(q);pool[li].textContent=n;pool[li++].style.cssText=`left:${q[0]/dpr}px;top:${q[1]/dpr}px;font-size:${thr<.004?12.5:thr<.02?11:thr<.1?10:9}px`}
  for(;li<40;li++)pool[li].style.display='none'}
 const update=()=>{const ps=Object.values(layers).map(page);draw();return Promise.all(ps)}
-const proj=(vp,x,y,z)=>{const w=vp[3]*x+vp[7]*y+vp[11]*z+vp[15];return w<=0?null:[(vp[0]*x+vp[4]*y+vp[8]*z+vp[12])/w*.5*cv.width+cv.width/2,cv.height/2-(vp[1]*x+vp[5]*y+vp[9]*z+vp[13])/w*.5*cv.height]}
+const proj=(vp,x,y,z)=>{const w=vp[3]*x+vp[7]*y+vp[11]*z+vp[15];return w<=0?null:[(vp[0]*x+vp[4]*y+vp[8]*z+vp[12])/w*.5*cv.width+cv.width/2,cv.height/2-(vp[1]*x+vp[5]*y+vp[9]*z+vp[13])/w*.5*cv.height,w]}
 const bCache=new Map()
 async function pick(x,y){if(S()<TH)return
  const vp=vpMat(),[bx0,bx1,by0,by1]=rect()[4].map((v,i)=>v+(i%2?.1:-.1));let bd=9*dpr;sel=-1
  if(wk)for(let i=0;i<wkN;i++){const wx=wk[i*4],wy=wk[i*4+1],wd=wk[i*4+2]&&1970+wk[i*4+2]/365.2425
   if(wx<bx0||wx>bx1||wy<by0||wy>by1||!(mask>>(wk[i*4+3]>.5?10:11)&1)||(wd?wd>yr&&yr<=Y1||wd<lo:lo>Y0))continue
-  const p=proj(vp,wx,wy,hgtC(wx,wy)+.004);if(!p)continue;const d=Math.hypot(p[0]-x,p[1]-y);if(d<bd){bd=d;sel=i}}
+  const p=proj(vp,wx,wy,hgtC(wx,wy)+.004);if(!p||p[2]>3.2*cam.d)continue;const d=Math.hypot(p[0]-x,p[1]-y);if(d<bd){bd=d;sel=i}}
  if(sel>=0){det??=(await(await fetch(D+'works.tsv')).text()).split('\n');const[permit,cat,status,street,town,auth,start,end]=det[sel].split('\t')
   return tip([`${street||'(no street)'}${town?', '+town:''}`,`${cat} · ${status.toLowerCase()}`,start+(end&&end!==start?' → '+end:''),`${auth.toLowerCase()} · permit ${permit}`])}
  if(tofs&&S()>=BTH){const[wx,wy]=toWorld(x,y),c=clamp((wx-MX)/CELL|0,0,NC-1)+NC*clamp((wy-MY)/CELL|0,0,NR-1)
