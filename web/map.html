@@ -53,7 +53,10 @@ let p=world(m.x,select(q.xy,q.zw,i==1u||i==3u));return v.vp*vec4f(p,hgt(p)+selec
 @fragment fn fs()->@location(0)vec4f{return vec4f(.45,.47,.52,.5);}
 @vertex fn vsf(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->@builtin(position)vec4f{
 let p=world(m.x,select(q.xy,q.zw,(i&1u)==1u));return v.vp*vec4f(p,hgt(p)+select(f32(m.y&0xffu),f32(m.y>>8u),i<2u)*5e-4,1.);}
-@fragment fn fsf()->@location(0)vec4f{return vec4f(.855,.865,.885,1.);}`})
+@fragment fn fsf()->@location(0)vec4f{return vec4f(.855,.865,.885,1.);}
+@vertex fn vsr(@builtin(vertex_index)i:u32,@location(0)a:vec4u,@location(1)b:vec4u)->@builtin(position)vec4f{
+let p=world(b.z,select(select(a.xy,a.zw,i==1u),b.xy,i==2u));return v.vp*vec4f(p,hgt(p)+f32(b.w&0xffu)*5e-4,1.);}
+@fragment fn fsr()->@location(0)vec4f{return vec4f(.855,.865,.885,1.);}`})
 const wmod=dev.createShaderModule({code:WG+`struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32,@location(3)@interpolate(flat)fd:f32};
 @vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f,@location(1)df:vec2f)->O{if((df.x>0.&&1970.+df.x/365.2425>v.ms.w)||select(v.tw2.z>0.,1970.+df.x/365.2425<v.tw2.z,df.x>0.)||((u32(v.tw2.y)>>select(11u,10u,df.y>.5))&1u)==0u){return O(OFF,vec2f(0.),0.,0.,0.);}
 let q=vec2f(vec2u(i&1u,i>>1u))*2.-1.;let hot=select(0.,1.,f32(inst)==v.ms.z);let c=v.vp*vec4f(pt,hgt(pt)+.004,1.);let fd=1.-smoothstep(2.5,4.,c.w/v.cd);if(fd<.01){return O(OFF,vec2f(0.),0.,0.,0.);}
@@ -74,9 +77,9 @@ if(li<nh){if(k+1u>=nw){return OFF;}g=v.tw.xy+st*vec2f(f32(k+(vi&1u)),f32(li));}e
 const bgl=dev.createBindGroupLayout({entries:[{buffer:{}},{texture:{sampleType:'uint'}},{texture:{sampleType:'uint',viewDimension:'2d-array'}},{buffer:{type:'read-only-storage'}}].map((e,binding)=>({binding,visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT,...e}))})
 const blend={color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}},layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]}),CAT=[{arrayStride:8,stepMode:'instance',attributes:[{shaderLocation:0,offset:0,format:'uint16x4'}]}];let stT
 const attrs=(arrayStride,a,b)=>[{arrayStride,stepMode:'instance',attributes:[{shaderLocation:0,offset:0,format:a},{shaderLocation:1,offset:8,format:b}]}],V12=attrs(12,'uint16x4','uint16x2')
-const mk=(m,c,buffers,topology='line-list',ds,e='')=>dev.createRenderPipeline({layout,primitive:{topology},vertex:{module:m,entryPoint:'vs'+e,constants:c,buffers},fragment:{module:m,entryPoint:'fs'+e,constants:c,targets:[{format:fmt,blend}]},depthStencil:{format:'depth24plus-stencil8',depthWriteEnabled:false,depthCompare:'always',...ds}})
-const pipe=mk(mod,{PASS:0},V12,'triangle-strip'),pipeHL=mk(mod,{PASS:1},V12,'triangle-strip'),bpipe=mk(bmod,undefined,V12,'line-list',{depthCompare:'less-equal'}),bfill=mk(bmod,undefined,V12,'triangle-strip',{depthWriteEnabled:true,depthCompare:'less-equal',depthBias:2,depthBiasSlopeScale:2},'f'),twire=mk(tmod),cpipe=mk(cmod,undefined,CAT),wpipe=mk(wmod,undefined,attrs(16,'float32x2','float32x2'),'triangle-strip'),
-fanP=mk(cmod,undefined,CAT,'triangle-list',{stencilFront:{compare:'always',passOp:'invert'},stencilBack:{compare:'always',passOp:'invert'}},'f'),seaP=mk(cmod,undefined,undefined,'triangle-strip',{stencilFront:{compare:'equal'},stencilBack:{compare:'equal'}},'s')
+const mk=(m,c,buffers,topology='line-list',ds,e='')=>dev.createRenderPipeline({layout,primitive:{topology},vertex:{module:m,entryPoint:'vs'+e,constants:c,buffers},fragment:{module:m,entryPoint:'fs'+e,constants:c,targets:[{format:fmt,blend}]},depthStencil:{format:'depth24plus-stencil8',depthWriteEnabled:false,depthCompare:'less-equal',...ds}})
+const pipe=mk(mod,{PASS:0},V12,'triangle-strip'),pipeHL=mk(mod,{PASS:1},V12,'triangle-strip'),bpipe=mk(bmod,undefined,V12),bfill=mk(bmod,undefined,V12,'triangle-strip',{depthWriteEnabled:true,depthBias:2,depthBiasSlopeScale:2},'f'),rpipe=mk(bmod,undefined,attrs(16,'uint16x4','uint16x4'),'triangle-list',{depthWriteEnabled:true,depthBias:2,depthBiasSlopeScale:2},'r'),twire=mk(tmod),cpipe=mk(cmod,undefined,CAT),wpipe=mk(wmod,undefined,attrs(16,'float32x2','float32x2'),'triangle-strip'),
+fanP=mk(cmod,undefined,CAT,'triangle-list',{depthCompare:'always',stencilFront:{compare:'always',passOp:'invert'},stencilBack:{compare:'always',passOp:'invert'}},'f'),seaP=mk(cmod,undefined,undefined,'triangle-strip',{stencilFront:{compare:'equal'},stencilBack:{compare:'equal'}},'s')
 const[bg,bg2]=[uni,uni2].map(u=>dev.createBindGroup({layout:bgl,entries:[{buffer:u},t0T.createView(),t1T.createView(),{buffer:lutB}].map((resource,binding)=>({binding,resource}))}))
 const mkbuf=ab=>{const b=dev.createBuffer({size:Math.max(12,ab.byteLength),usage:BU.VERTEX|BU.COPY_DST});Q.writeBuffer(b,0,ab);return b}
 const layers={},mklayer=(id,blob,cnt,bytes,cap,gate,load,evict)=>{let a=0;layers[id]={blob,cnt,off:Uint32Array.from(cnt,c=>(a+=c)-c),bytes,cap,gate,load,evict,cells:new Map()}}
@@ -117,11 +120,11 @@ function draw(){const s=S(),vp=vpMat(),bb=rect()[4]
  ub(uni,[i0,j0,st,nw,nh]);ub(uni2,[iF,jF,sf,nwF,nhF])
  if(stT?.width!=cv.width||stT?.height!=cv.height){stT?.destroy();stT=dev.createTexture({size:[cv.width,cv.height],format:'depth24plus-stencil8',usage:GPUTextureUsage.RENDER_ATTACHMENT})}
  const e=dev.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),clearValue:{r:1,g:1,b:1,a:1},loadOp:'clear',storeOp:'store'}],depthStencilAttachment:{view:stT.createView(),depthClearValue:1,depthLoadOp:'clear',depthStoreOp:'discard',stencilLoadOp:'clear',stencilStoreOp:'discard'}});p.setBindGroup(0,bg)
+ if(s>=BTH)for(const[L,pl,nv]of[[layers.bldg,bfill,4],[layers.roof,rpipe,3],[layers.bldg,bpipe,6]])if(L){p.setPipeline(pl);for(const o of L.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(nv,o.n)}}
  if(coastN){p.setPipeline(fanP);p.setVertexBuffer(0,coastVB);p.draw(3,coastN);p.setPipeline(seaP);p.draw(4)
   p.setPipeline(cpipe);p.draw(2,coastN)}
  if(cam.p>.02||s>=TH){p.setPipeline(twire);p.draw(2*Math.max(nw,nh),nw+nh)
   if(sf>st){p.setBindGroup(0,bg2);p.draw(2*Math.max(nwF,nhF),nwF+nhF);p.setBindGroup(0,bg)}}
- const B=layers.bldg;if(B&&s>=BTH)for(const[pl,nv]of[[bfill,4],[bpipe,6]]){p.setPipeline(pl);for(const o of B.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(nv,o.n)}}
  for(const pl of[pipe,pipeHL]){p.setPipeline(pl);if(baseN&&s<TH){p.setVertexBuffer(0,baseVB);p.draw(4,baseN)}
   if(layers.pipe&&s>=TH)for(const o of layers.pipe.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(4,o.n)}}
  if(wkN&&s>=TH){p.setPipeline(wpipe);p.setVertexBuffer(0,wkVB);p.draw(4,wkN)}p.end();Q.submit([e.finish()])
@@ -162,10 +165,10 @@ cv.onpointermove=e=>{if(!pts.has(e.pointerId))return;pts.set(e.pointerId,e)
 cv.onwheel=e=>{e.preventDefault();dolly(Math.exp(e.deltaY*.003),e.offsetX*dpr,e.offsetY*dpr);draw();sched()}
 addEventListener('resize',resize)
 const get=f=>fetch(D+f).then(r=>r.ok?r.arrayBuffer():null).catch(()=>null);resize()
-const[pidx,baseAB,t0AB,t1idx,bidx,btofs,wkAB,coAB,plAB]=await Promise.all(['map.idx','map.base.bin','terr0.bin','terr1.idx','bldg.idx','bldg.tofs','works.f32','coast.u16','places.tsv'].map(get))
+const[pidx,baseAB,t0AB,t1idx,bidx,btofs,ridx,wkAB,coAB,plAB]=await Promise.all(['map.idx','map.base.bin','terr0.bin','terr1.idx','bldg.idx','bldg.tofs','roof.idx','works.f32','coast.u16','places.tsv'].map(get))
 if(!pidx||!baseAB)die('map artefacts missing — run the extractor')
-const vbload=(id,b)=>({vb:mkbuf(b),n:b.byteLength/12})
-mklayer('pipe','map.bin',new Uint32Array(pidx),12,700,TH,vbload);baseVB=mkbuf(baseAB);baseN=baseAB.byteLength/12
+const vbload=by=>(id,b)=>({vb:mkbuf(b),n:b.byteLength/by})
+mklayer('pipe','map.bin',new Uint32Array(pidx),12,700,TH,vbload(12));baseVB=mkbuf(baseAB);baseN=baseAB.byteLength/12
 if(t0AB){t0cpu=new Uint16Array(t0AB);Q.writeTexture({texture:t0T},t0AB,{bytesPerRow:T0N*2},[T0N,T0N])}
 if(t1idx){const bits=new Uint8Array(t1idx),cnt=Uint8Array.from({length:N},(_,i)=>(bits[i>>3]>>(i&7))&1)
  const toL=(id,cpu)=>{const l=freeL.pop();if(l==null)return null
@@ -173,7 +176,8 @@ if(t1idx){const bits=new Uint8Array(t1idx),cnt=Uint8Array.from({length:N},(_,i)=
  mklayer('terr','terr1.bin',cnt,T1B,T1L-8,TH,(id,b)=>{const cpu=new Uint16Array(b.buffer.slice(b.byteOffset,b.byteOffset+T1B));return{cpu,l:toL(id,cpu)}},
   (id,e)=>{if(e.l!=null){freeL.push(e.l);lut[id]=-1;Q.writeBuffer(lutB,id*4,lut,id,1)}})
  layers.terr.re=(id,e)=>{if(e.cpu&&e.l==null)e.l=toL(id,e.cpu)}}
-if(bidx&&btofs){tofs=new Uint32Array(btofs);mklayer('bldg','bldg.bin',new Uint32Array(bidx),12,250,BTH,vbload)}
+if(bidx&&btofs){tofs=new Uint32Array(btofs);mklayer('bldg','bldg.bin',new Uint32Array(bidx),12,250,BTH,vbload(12))}
+if(ridx)mklayer('roof','roof.bin',new Uint32Array(ridx),16,250,BTH,vbload(16))
 if(wkAB){wk=new Float32Array(wkAB);wkVB=mkbuf(wkAB);wkN=wk.length/4}
 if(coAB){coastVB=mkbuf(coAB);coastN=coAB.byteLength/8}
 if(plAB)places=new TextDecoder().decode(plAB).trim().split('\n').map(l=>{const[n,x,y,r]=l.split('\t');return[+x,+y,18e3/+r,n]})

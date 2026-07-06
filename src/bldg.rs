@@ -6,6 +6,8 @@
 //
 //   bldg.bin   edges sorted by cell — http-range-fetched at street zoom only.
 //   bldg.idx   u32 edge count per cell.
+//   roof.bin   earcut roof triangles, 16 B: u16 x0 y0 x1 y1 x2 y2 cell, u8 h+pad.
+//   roof.idx   u32 triangle count per cell.
 //   bldg.tsv   named buildings, "x y name" (bng km), sorted by cell — the lazy
 //              click sidecar, fetched per pick.
 //   bldg.tofs  u32 byte offset per cell +1 into bldg.tsv.
@@ -14,9 +16,9 @@
 // relation members inherit the relation's tags; rings are never assembled —
 // every member way's edges draw the same wireframe walls stitching would.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 
 use osmpbf::{Element, ElementReader};
 use rayon::prelude::*;
@@ -90,35 +92,86 @@ struct Way {
     h: u8,
     mh: u8,
     name: Option<String>,
+    roof: bool,
+}
+
+/// clip a roof triangle (km) at cell bounds (sutherland-hodgman per overlapped
+/// cell), fan the convex piece, quantise to u16 cell-local — the 16 B analogue
+/// of Grid::clip for edges.
+fn clip_tri(g: &Grid, t: [(f64, f64); 3], mut emit: impl FnMut(u32, [u16; 6])) {
+    let (x0, x1) = t.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.0), b.max(p.0)));
+    let (y0, y1) = t.iter().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
+    let cl = |v: f64, o: f64, n: usize| (((v - o) / g.cell).floor() as i64).clamp(0, n as i64 - 1);
+    for r in cl(y0, g.miny, g.nr)..=cl(y1, g.miny, g.nr) {
+        for c in cl(x0, g.minx, g.nc)..=cl(x1, g.minx, g.nc) {
+            let (ox, oy) = (g.minx + c as f64 * g.cell, g.miny + r as f64 * g.cell);
+            let mut poly: Vec<(f64, f64)> = t.to_vec();
+            for s in 0..4 {
+                let lim = [ox, ox + g.cell, oy, oy + g.cell][s];
+                let inside = |p: &(f64, f64)| if s < 2 { (p.0 - lim) * [1.0, -1.0][s] >= 0.0 } else { (p.1 - lim) * [1.0, -1.0][s - 2] >= 0.0 };
+                let hit = |a: (f64, f64), b: (f64, f64)| {
+                    let t = if s < 2 { (lim - a.0) / (b.0 - a.0) } else { (lim - a.1) / (b.1 - a.1) };
+                    (a.0 + t * (b.0 - a.0), a.1 + t * (b.1 - a.1))
+                };
+                let mut out = Vec::new();
+                for k in 0..poly.len() {
+                    let (a, b) = (poly[k], poly[(k + 1) % poly.len()]);
+                    match (inside(&a), inside(&b)) {
+                        (true, true) => out.push(b),
+                        (true, false) => out.push(hit(a, b)),
+                        (false, true) => { out.push(hit(a, b)); out.push(b) }
+                        _ => {}
+                    }
+                }
+                poly = out;
+                if poly.len() < 3 { break }
+            }
+            if poly.len() < 3 { continue }
+            let qz = |v: f64, o: f64| ((v - o) / g.cell * 65535.0).round().clamp(0.0, 65535.0) as u16;
+            let q: Vec<[u16; 2]> = poly.iter().map(|p| [qz(p.0, ox), qz(p.1, oy)]).collect();
+            for k in 1..q.len() - 1 {
+                let ar = (q[k][0] as i64 - q[0][0] as i64) * (q[k + 1][1] as i64 - q[0][1] as i64)
+                    - (q[k][1] as i64 - q[0][1] as i64) * (q[k + 1][0] as i64 - q[0][0] as i64);
+                if ar != 0 {
+                    emit(c as u32 + g.nc as u32 * r as u32, [q[0][0], q[0][1], q[k][0], q[k][1], q[k + 1][0], q[k + 1][1]]);
+                }
+            }
+        }
+    }
 }
 
 pub fn write(m: &MapCfg) {
     let g = Grid::new(m);
     let reader = || ElementReader::from_path(PBF).expect("data/england-latest.osm.pbf — run scripts/fetch-buildings.sh");
 
-    // pass 1: building multipolygon relations → member way id → inherited tags
+    // pass 1: building multipolygon relations → member way id → inherited tags.
+    // members of relations with inner rings are also flagged roofless — we never
+    // assemble rings, so triangulating those outers would slab over courtyards.
     eprintln!("  buildings: relations…");
-    let rel: HashMap<i64, (u8, u8, Option<String>)> = reader()
+    let (rel, holey): (HashMap<i64, (u8, u8, Option<String>)>, HashSet<i64>) = reader()
         .par_map_reduce(
             |el| {
-                let mut out = HashMap::new();
+                let mut out = (HashMap::new(), HashSet::new());
                 if let Element::Relation(r) = el {
                     let tag = |k: &str| r.tags().find(|(a, _)| *a == k).map(|(_, v)| v);
                     if tag("building").is_some() {
                         let (h, mh) = heights(tag);
                         let name = tag("name").map(str::to_string);
-                        for mb in r.members() {
-                            if mb.member_type == osmpbf::RelMemberType::Way {
-                                out.insert(mb.member_id, (h, mh, name.clone()));
-                            }
+                        let ways = || r.members().filter(|mb| mb.member_type == osmpbf::RelMemberType::Way);
+                        for mb in ways() {
+                            out.0.insert(mb.member_id, (h, mh, name.clone()));
+                        }
+                        if ways().any(|mb| mb.role().map_or(false, |r| r == "inner")) {
+                            out.1.extend(ways().map(|mb| mb.member_id));
                         }
                     }
                 }
                 out
             },
-            HashMap::new,
-            |mut a, b| {
-                a.extend(b);
+            Default::default,
+            |mut a, b: (HashMap<_, _>, HashSet<_>)| {
+                a.0.extend(b.0);
+                a.1.extend(b.1);
                 a
             },
         )
@@ -137,7 +190,9 @@ pub fn write(m: &MapCfg) {
                         let (h, mh) = if own { heights(tag) } else { let r = &rel[&w.id()]; (r.0, r.1) };
                         let name = tag("name").map(str::to_string)
                             .or_else(|| rel.get(&w.id()).and_then(|r| r.2.clone()));
-                        out.push(Way { refs: w.refs().collect(), h, mh, name });
+                        let refs: Vec<i64> = w.refs().collect();
+                        let roof = refs.len() > 3 && refs.first() == refs.last() && !holey.contains(&w.id());
+                        out.push(Way { refs, h, mh, name, roof });
                     }
                 }
                 out
@@ -196,12 +251,12 @@ pub fn write(m: &MapCfg) {
         })
         .collect();
 
-    // clip, bin — and collect the named-building click rows
-    let (mut recs, names): (Vec<(u32, [u16; 4], u8, u8)>, Vec<(u32, String)>) = ways
+    // clip, bin — walls, earcut roofs, and the named-building click rows
+    let (mut recs, mut roofs, names): (Vec<(u32, [u16; 4], u8, u8)>, Vec<(u32, [u16; 6], u8)>, Vec<(u32, String)>) = ways
         .par_iter()
         .fold(
-            || (Vec::new(), Vec::new()),
-            |(mut recs, mut names), w| {
+            || (Vec::new(), Vec::new(), Vec::new()),
+            |(mut recs, mut roofs, mut names), w| {
                 let pts: Vec<(f64, f64)> = w
                     .refs
                     .iter()
@@ -214,10 +269,17 @@ pub fn write(m: &MapCfg) {
                     p.0 >= g.minx && p.0 < g.minx + g.nc as f64 * g.cell && p.1 >= g.miny && p.1 < g.miny + g.nr as f64 * g.cell
                 };
                 if pts.len() < 2 || !pts.iter().any(inside) {
-                    return (recs, names);
+                    return (recs, roofs, names);
                 }
                 for w2 in pts.windows(2) {
                     g.clip(w2[0], w2[1], |c, q| recs.push((c, q, w.h, w.mh)));
+                }
+                if w.roof && pts.len() > 3 && pts.first() == pts.last() {
+                    let ring = &pts[..pts.len() - 1];
+                    let flat: Vec<f64> = ring.iter().flat_map(|p| [p.0, p.1]).collect();
+                    for t in earcutr::earcut(&flat, &[], 2).unwrap_or_default().chunks(3) {
+                        clip_tri(&g, [ring[t[0]], ring[t[1]], ring[t[2]]], |c, q| roofs.push((c, q, w.h)));
+                    }
                 }
                 if let Some(name) = &w.name {
                     let (cx, cy) = (pts.iter().map(|p| p.0).sum::<f64>() / pts.len() as f64,
@@ -227,20 +289,36 @@ pub fn write(m: &MapCfg) {
                     let name = name.replace(['\t', '\n', '\r'], " ");
                     names.push((c, format!("{cx:.3}\t{cy:.3}\t{}\n", name.trim())));
                 }
-                (recs, names)
+                (recs, roofs, names)
             },
         )
         .reduce(
-            || (Vec::new(), Vec::new()),
-            |(mut a, mut b), (mut c, mut d)| {
-                a.append(&mut c);
-                b.append(&mut d);
-                (a, b)
+            || (Vec::new(), Vec::new(), Vec::new()),
+            |(mut a, mut b, mut c), (mut d, mut e, mut f)| {
+                a.append(&mut d);
+                b.append(&mut e);
+                c.append(&mut f);
+                (a, b, c)
             },
         );
 
     write_layer(&m.dir, "bldg", &mut recs, g.nc * g.nr);
     let path = |f: &str| format!("{}/{}", m.dir, f);
+
+    // roofs: same sorted-blob + per-cell count contract, 16 B records
+    roofs.par_sort_unstable_by_key(|e| e.0);
+    let mut counts = vec![0u32; g.nc * g.nr];
+    let mut w = BufWriter::new(File::create(path("roof.bin")).unwrap());
+    for (c, q, h) in &roofs {
+        counts[*c as usize] += 1;
+        for v in q {
+            w.write_all(&v.to_le_bytes()).unwrap();
+        }
+        w.write_all(&(*c as u16).to_le_bytes()).unwrap();
+        w.write_all(&[*h, 0]).unwrap();
+    }
+    w.flush().unwrap();
+    write_idx(&path("roof.idx"), &counts);
 
     // the click sidecar: rows sorted by cell + a byte offset per cell boundary
     let mut names = names;
@@ -258,5 +336,5 @@ pub fn write(m: &MapCfg) {
     }
     tofs[g.nc * g.nr] = at;
     write_idx(&path("bldg.tofs"), &tofs);
-    eprintln!("  buildings: {} edges, {} named  ->  {}/bldg.*", recs.len(), names.len(), m.dir);
+    eprintln!("  buildings: {} edges, {} roof tris, {} named  ->  {}/bldg.* roof.*", recs.len(), roofs.len(), names.len(), m.dir);
 }
