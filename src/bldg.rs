@@ -13,10 +13,12 @@
 //   bldg.tofs  u32 byte offset per cell +1 into bldg.tsv.
 //
 // heights: `height` tag, else `building:levels`×3 m, else 8 m. multipolygon
-// relation members inherit the relation's tags; rings are never assembled —
-// every member way's edges draw the same wireframe walls stitching would.
+// relation members inherit the relation's tags; walls need no ring assembly,
+// but roofs do — member ways are stitched into rings and each outer earcut
+// with the inner rings it contains as holes, so courtyards stay open under
+// an otherwise filled roof.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 
@@ -88,11 +90,44 @@ fn heights<'a>(tag: impl Fn(&str) -> Option<&'a str>) -> (u8, u8) {
 }
 
 struct Way {
+    id: i64,
     refs: Vec<i64>,
     h: u8,
     mh: u8,
     name: Option<String>,
     roof: bool,
+}
+
+/// stitch ways into closed rings by matching endpoint node ids (greedy)
+fn rings(mut ws: Vec<Vec<i64>>) -> Vec<Vec<i64>> {
+    let mut out = Vec::new();
+    while let Some(mut r) = ws.pop() {
+        while r.first() != r.last() {
+            let e = *r.last().unwrap();
+            let Some(i) = ws.iter().position(|w| w.first() == Some(&e) || w.last() == Some(&e)) else { break };
+            let mut w = ws.swap_remove(i);
+            if w.last() == Some(&e) {
+                w.reverse()
+            }
+            r.extend_from_slice(&w[1..]);
+        }
+        if r.len() > 3 && r.first() == r.last() {
+            out.push(r)
+        }
+    }
+    out
+}
+
+/// ray-cast point-in-ring
+fn pip(p: (f64, f64), ring: &[(f64, f64)]) -> bool {
+    let mut c = false;
+    for i in 0..ring.len() {
+        let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+        if (a.1 > p.1) != (b.1 > p.1) && p.0 < a.0 + (p.1 - a.1) / (b.1 - a.1) * (b.0 - a.0) {
+            c = !c
+        }
+    }
+    c
 }
 
 /// clip a roof triangle (km) at cell bounds (sutherland-hodgman per overlapped
@@ -144,32 +179,33 @@ pub fn write(m: &MapCfg) {
     let g = Grid::new(m);
     let reader = || ElementReader::from_path(PBF).expect("data/england-latest.osm.pbf — run scripts/fetch-buildings.sh");
 
-    // pass 1: building multipolygon relations → member way id → inherited tags.
-    // members of relations with inner rings are also flagged roofless — we never
-    // assemble rings, so triangulating those outers would slab over courtyards.
+    // pass 1: building multipolygon relations → member way id → inherited tags,
+    // plus each relation's member list (way id, inner?) for roof ring assembly
     eprintln!("  buildings: relations…");
-    let (rel, holey): (HashMap<i64, (u8, u8, Option<String>)>, HashSet<i64>) = reader()
+    let (rel, mps): (HashMap<i64, (u8, u8, Option<String>)>, Vec<(Vec<(i64, bool)>, u8)>) = reader()
         .par_map_reduce(
             |el| {
-                let mut out = (HashMap::new(), HashSet::new());
+                let mut out = (HashMap::new(), Vec::new());
                 if let Element::Relation(r) = el {
                     let tag = |k: &str| r.tags().find(|(a, _)| *a == k).map(|(_, v)| v);
                     if tag("building").is_some() {
                         let (h, mh) = heights(tag);
                         let name = tag("name").map(str::to_string);
-                        let ways = || r.members().filter(|mb| mb.member_type == osmpbf::RelMemberType::Way);
-                        for mb in ways() {
-                            out.0.insert(mb.member_id, (h, mh, name.clone()));
+                        let mem: Vec<(i64, bool)> = r
+                            .members()
+                            .filter(|mb| mb.member_type == osmpbf::RelMemberType::Way)
+                            .map(|mb| (mb.member_id, mb.role().map_or(false, |r| r == "inner")))
+                            .collect();
+                        for (id, _) in &mem {
+                            out.0.insert(*id, (h, mh, name.clone()));
                         }
-                        if ways().any(|mb| mb.role().map_or(false, |r| r == "inner")) {
-                            out.1.extend(ways().map(|mb| mb.member_id));
-                        }
+                        out.1.push((mem, h));
                     }
                 }
                 out
             },
             Default::default,
-            |mut a, b: (HashMap<_, _>, HashSet<_>)| {
+            |mut a, b: (HashMap<_, _>, Vec<_>)| {
                 a.0.extend(b.0);
                 a.1.extend(b.1);
                 a
@@ -191,8 +227,8 @@ pub fn write(m: &MapCfg) {
                         let name = tag("name").map(str::to_string)
                             .or_else(|| rel.get(&w.id()).and_then(|r| r.2.clone()));
                         let refs: Vec<i64> = w.refs().collect();
-                        let roof = refs.len() > 3 && refs.first() == refs.last() && !holey.contains(&w.id());
-                        out.push(Way { refs, h, mh, name, roof });
+                        let roof = own && refs.len() > 3 && refs.first() == refs.last();
+                        out.push(Way { id: w.id(), refs, h, mh, name, roof });
                     }
                 }
                 out
@@ -251,6 +287,10 @@ pub fn write(m: &MapCfg) {
         })
         .collect();
 
+    let inside = |p: &(f64, f64)| {
+        p.0 >= g.minx && p.0 < g.minx + g.nc as f64 * g.cell && p.1 >= g.miny && p.1 < g.miny + g.nr as f64 * g.cell
+    };
+
     // clip, bin — walls, earcut roofs, and the named-building click rows
     let (mut recs, mut roofs, names): (Vec<(u32, [u16; 4], u8, u8)>, Vec<(u32, [u16; 6], u8)>, Vec<(u32, String)>) = ways
         .par_iter()
@@ -265,9 +305,6 @@ pub fn write(m: &MapCfg) {
                         p.0.is_finite().then_some(p)
                     })
                     .collect();
-                let inside = |p: &(f64, f64)| {
-                    p.0 >= g.minx && p.0 < g.minx + g.nc as f64 * g.cell && p.1 >= g.miny && p.1 < g.miny + g.nr as f64 * g.cell
-                };
                 if pts.len() < 2 || !pts.iter().any(inside) {
                     return (recs, roofs, names);
                 }
@@ -301,6 +338,49 @@ pub fn write(m: &MapCfg) {
                 (a, b, c)
             },
         );
+
+    // relation roofs: stitch each building relation's member ways into rings,
+    // earcut every outer with the inner rings it contains as holes
+    let byid: HashMap<i64, &[i64]> = ways.iter().map(|w| (w.id, &w.refs[..])).collect();
+    roofs.par_extend(mps.par_iter().flat_map_iter(|(mem, h)| {
+        let rings_of = |inner: bool| {
+            rings(mem.iter().filter(|m| m.1 == inner).filter_map(|m| byid.get(&m.0).map(|r| r.to_vec())).collect())
+                .iter()
+                .map(|r| {
+                    r[..r.len() - 1]
+                        .iter()
+                        .filter_map(|n| {
+                            let p = coord[ids.binary_search(n).ok()?];
+                            p.0.is_finite().then_some(p)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .filter(|r| r.len() > 2)
+                .collect::<Vec<_>>()
+        };
+        let inners = rings_of(true);
+        let mut out = Vec::new();
+        for outer in rings_of(false) {
+            if !outer.iter().any(inside) {
+                continue;
+            }
+            let mut verts = outer.clone();
+            let holes: Vec<usize> = inners
+                .iter()
+                .filter(|i| pip(i[0], &outer))
+                .map(|i| {
+                    let at = verts.len();
+                    verts.extend_from_slice(i);
+                    at
+                })
+                .collect();
+            let flat: Vec<f64> = verts.iter().flat_map(|p| [p.0, p.1]).collect();
+            for t in earcutr::earcut(&flat, &holes, 2).unwrap_or_default().chunks(3) {
+                clip_tri(&g, [verts[t[0]], verts[t[1]], verts[t[2]]], |c, q| out.push((c, q, *h)));
+            }
+        }
+        out
+    }));
 
     write_layer(&m.dir, "bldg", &mut recs, g.nc * g.nr);
     let path = |f: &str| format!("{}/{}", m.dir, f);
