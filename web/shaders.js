@@ -99,12 +99,12 @@ struct O{@builtin(position)p:vec4f,@location(0)@interpolate(flat)t:u32};
   let d=normalize(cb.xy/cb.w-ca.xy/ca.w);
   return O(vec4f(c.xy+vec2f(-d.y,d.x)*(f32(i&1u)*2.-1.)*v.ms.xy*${(1 / 4.5).toFixed(4)}*c.w,c.zw),m.y&0xffu);
 }
+const PAL=array<vec3f,8>(${palette});
 @fragment fn fs(@location(0)@interpolate(flat)t:u32)->@location(0)vec4f{
   if(PASS>.5){return vec4f(${rgb('ff2d9b')},1.);}
   let n=t&0x7fu;
   if(n>7u){return vec4f(${rgb('4d5261')},.55);}
-  var pal=array<vec3f,8>(${palette});
-  return vec4f(pal[n],.82);
+  return vec4f(PAL[n],.82);
 }`
 
   // buildings: 12 B instance = footprint edge (u16 pair) + cell + heights

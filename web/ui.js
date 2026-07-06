@@ -59,6 +59,12 @@ export function makeUI({ M, state, cam, heightAt, repaint }) {
   // when off-screen or within 64 px of an already placed label
   const MAXL = 40
   const pool = [...Array(MAXL)].map(() => $('pl').appendChild(document.createElement('span')))
+  // only touch the dom when a span actually changed — labels redraw every
+  // frame, but between camera moves they sit still
+  const set = (el, name, css) => {
+    if (el._name !== name) { el._name = name; el.textContent = name }
+    if (el._css !== css) { el._css = css; el.style.cssText = css }
+  }
   let places = []
   function placeLabels(vp, bb, s) {
     let li = 0
@@ -70,10 +76,9 @@ export function makeUI({ M, state, cam, heightAt, repaint }) {
       if (!q || q[0] < 0 || q[0] > cam.canvas.width || q[1] < 0 || q[1] > cam.canvas.height
         || hits.some(h => Math.hypot(h[0] - q[0], h[1] - q[1]) < 64 * state.dpr)) continue
       hits.push(q)
-      pool[li].textContent = name
-      pool[li++].style.cssText = `left:${q[0] / state.dpr}px;top:${q[1] / state.dpr}px;font-size:${thr < .004 ? 12.5 : thr < .02 ? 11 : thr < .1 ? 10 : 9}px`
+      set(pool[li++], name, `left:${q[0] / state.dpr}px;top:${q[1] / state.dpr}px;font-size:${thr < .004 ? 12.5 : thr < .02 ? 11 : thr < .1 ? 10 : 9}px`)
     }
-    for (; li < MAXL; li++) pool[li].style.display = 'none'
+    for (; li < MAXL; li++) set(pool[li], '', 'display:none')
   }
 
   // tooltip: first line bold, rest plain
