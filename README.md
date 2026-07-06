@@ -20,6 +20,7 @@ scripts/fetch-lidar.py                                 # EA 1 m LiDAR DTM (resum
 scripts/fetch-buildings.sh                             # Geofabrik England OSM extract
 scripts/fetch-basemap.py                               # GB coastline (ONS) + place names (OS Open Names)
 scripts/build-years.sh                                 # laid-year sidecar (needs duckdb)
+scripts/build-sites.sh                                 # NTS sites layer (needs duckdb)
 ```
 
 `USER` / `PASS` are your Veracity account credentials. `fetch-lidar.py` and
@@ -72,4 +73,6 @@ mains), `network_area`, `length_m`, `survey_date`, `geometry` (WKB). See
 Alongside it, the extractor writes the WebGPU map artefacts (`dist/map.*`,
 `terr*.bin`, `bldg.*`, `works.*`) served by `web/map.html`;
 `scripts/fetch-basemap.py` adds the basemap pair (`coast.u16`, `places.tsv`)
-directly to `dist/`.
+directly to `dist/`, and `scripts/build-sites.sh` the sites pair (`sites.f32`,
+`sites.tsv` — National Gas Transmission's above-ground installations,
+compressor stations and terminals, shown as clickable markers).
