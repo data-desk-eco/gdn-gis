@@ -95,7 +95,7 @@ function draw(){const s=S(),vp=vpMat(),bb=rect()[4]
  const e=dev.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),clearValue:{r:1,g:1,b:1,a:1},loadOp:'clear',storeOp:'store'}]});p.setBindGroup(0,bg)
  if(cam.p>.02||s>=TH){p.setPipeline(twire);p.draw(2*Math.max(nw,nh),nw+nh)}
  const B=layers.bldg;if(B&&s>=BTH){p.setPipeline(bpipe);for(const o of B.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(6,o.n)}}
- for(const pl of[pipe,pipeHL]){p.setPipeline(pl);if(baseN){p.setVertexBuffer(0,baseVB);p.draw(2,baseN)}
+ for(const pl of[pipe,pipeHL]){p.setPipeline(pl);if(baseN&&s<TH){p.setVertexBuffer(0,baseVB);p.draw(2,baseN)}
   if(layers.pipe&&s>=TH)for(const o of layers.pipe.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(2,o.n)}}
  if(wkN&&s>=TH){p.setPipeline(wpipe);p.setVertexBuffer(0,wkVB);p.draw(4,wkN)}p.end();Q.submit([e.finish()])}
 const update=()=>{const ps=Object.values(layers).map(page);draw();return Promise.all(ps)}
