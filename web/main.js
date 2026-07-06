@@ -62,10 +62,21 @@ const repaint = () => {
 }
 const ui = makeUI({ M, state, cam, heightAt, repaint })
 
-// paging runs when the camera has settled for 110 ms
-let timer
-const sched = () => { clearTimeout(timer); timer = setTimeout(update, 110) }
-const update = () => { const done = paging.update(); repaint(); return done }
+// paging runs 110 ms after the camera settles, and at most every 300 ms
+// during sustained motion so long pans stream cells in instead of popping
+let timer, lastPage = 0
+const sched = () => {
+  clearTimeout(timer)
+  timer = setTimeout(update, 110)
+  if (performance.now() - lastPage > 300) update()
+}
+const update = () => {
+  lastPage = performance.now()
+  if (wk && cam.scale() >= TH) details()  // warm the click-card sidecar at street zoom
+  const done = paging.update()
+  repaint()
+  return done
+}
 
 const resize = () => { cv.width = innerWidth * dpr | 0; cv.height = innerHeight * dpr | 0; repaint(); sched() }
 addEventListener('resize', resize)
@@ -121,7 +132,8 @@ cv.onwheel = e => { e.preventDefault(); cam.dolly(Math.exp(e.deltaY * .003), e.o
 
 // --- picking: nearest works ring by screen distance, else a named building
 // in the clicked cell. detail text rides in lazily fetched tsv sidecars ---
-let wk, det, tofs
+let wk, detP, tofs
+const details = () => detP ??= fetch(D + 'works.tsv').then(r => r.text()).then(t => t.split('\n'))
 const bldgNames = new Map()
 async function pick(x, y) {
   if (cam.scale() < TH) return
@@ -139,7 +151,7 @@ async function pick(x, y) {
     if (d < best) { best = d; state.sel = i }
   }
   if (state.sel >= 0) {
-    det ??= (await (await fetch(D + 'works.tsv')).text()).split('\n')
+    const det = await details()
     const [permit, cat, status, street, town, auth, start, end, tm, loc] = det[state.sel].split('\t')
     return ui.tip([
       `${street || '(no street)'}${town ? ', ' + town : ''}`,
@@ -171,41 +183,43 @@ async function pick(x, y) {
   ui.tip(null)
 }
 
-// --- boot: fetch every index + resident blob in parallel, register layers ---
+// --- boot: start every fetch at once, but first-paint as soon as the pipe
+// index + base skeleton land; everything else attaches and repaints as it
+// arrives, so the map is alive in one round trip instead of ten megabytes ---
 const get = f => fetch(D + f).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null)
 resize()
-const [pipeIdx, baseAB, t0AB, t1Bits, bldgIdx, bldgTofs, roofIdx, worksAB, coastAB, placesAB] =
-  await Promise.all(['map.idx', 'map.base.bin', 'terr0.bin', 'terr1.idx', 'bldg.idx', 'bldg.tofs', 'roof.idx', 'works.f32', 'coast.u16', 'places.tsv'].map(get))
-if (!pipeIdx || !baseAB) die('map artefacts missing — run the extractor')
+const F = Object.fromEntries(['map.idx', 'map.base.bin', 'terr0.bin', 'terr1.idx', 'bldg.idx', 'bldg.tofs', 'roof.idx', 'works.f32', 'coast.u16', 'places.tsv'].map(f => [f, get(f)]))
+const when = (keys, use) => Promise.all(keys.map(k => F[k])).then(abs => { if (abs.every(Boolean)) { use(...abs); sched() } })
 
+const [pipeIdx, baseAB] = await Promise.all([F['map.idx'], F['map.base.bin']])
+if (!pipeIdx || !baseAB) die('map artefacts missing — run the extractor')
 const vbload = bytes => (id, b) => ({ vb: renderer.makeBuffer(b), n: b.byteLength / bytes })
 paging.add('pipe', { blob: 'map.bin', counts: new Uint32Array(pipeIdx), bytes: 12, cap: 700, gate: TH, load: vbload(12) })
 state.baseVB = renderer.makeBuffer(baseAB)
 state.baseN = baseAB.byteLength / 12
+msg.remove()
+update()
+ui.startPlayback()
 
-if (t0AB) { t0cpu = new Uint16Array(t0AB); renderer.uploadCoarse(t0AB) }
-if (t1Bits) {
+when(['terr0.bin'], ab => { t0cpu = new Uint16Array(ab); renderer.uploadCoarse(ab) })
+when(['terr1.idx'], ab => {
   // presence bitmap -> 0/1 counts; each cell is one fixed-size height grid
-  const bits = new Uint8Array(t1Bits)
+  const bits = new Uint8Array(ab)
   paging.add('terr', {
     blob: 'terr1.bin', counts: Uint8Array.from({ length: N }, (_, i) => bits[i >> 3] >> (i & 7) & 1), bytes: T1B, cap: 248, gate: TH,
     load: (id, b) => { const cpu = new Uint16Array(b.buffer.slice(b.byteOffset, b.byteOffset + T1B)); return { cpu, l: renderer.allocSlot(id, cpu) } },
     onEvict: renderer.freeSlot,
     revisit: (id, e) => { if (e.cpu && e.l == null) e.l = renderer.allocSlot(id, e.cpu) },
   })
-}
-if (bldgIdx && bldgTofs) {
-  tofs = new Uint32Array(bldgTofs)
-  paging.add('bldg', { blob: 'bldg.bin', counts: new Uint32Array(bldgIdx), bytes: 12, cap: 250, gate: BTH, load: vbload(12) })
-}
-if (roofIdx) paging.add('roof', { blob: 'roof.bin', counts: new Uint32Array(roofIdx), bytes: 16, cap: 250, gate: BTH, load: vbload(16) })
-if (worksAB) { wk = new Float32Array(worksAB); state.wkVB = renderer.makeBuffer(worksAB); state.wkN = wk.length / 4 }
-if (coastAB) { state.coastVB = renderer.makeBuffer(coastAB); state.coastN = coastAB.byteLength / 8 }
-if (placesAB) ui.setPlaces(new TextDecoder().decode(placesAB).trim().split('\n').map(l => { const [n, x, y, r] = l.split('\t'); return [+x, +y, 18e3 / +r, n] }))
-
-msg.remove()
-await update()
-ui.startPlayback()
+})
+when(['bldg.idx', 'bldg.tofs'], (idx, tf) => {
+  tofs = new Uint32Array(tf)
+  paging.add('bldg', { blob: 'bldg.bin', counts: new Uint32Array(idx), bytes: 12, cap: 250, gate: BTH, load: vbload(12) })
+})
+when(['roof.idx'], idx => paging.add('roof', { blob: 'roof.bin', counts: new Uint32Array(idx), bytes: 16, cap: 250, gate: BTH, load: vbload(16) }))
+when(['works.f32'], ab => { wk = new Float32Array(ab); state.wkVB = renderer.makeBuffer(ab); state.wkN = wk.length / 4 })
+when(['coast.u16'], ab => { state.coastVB = renderer.makeBuffer(ab); state.coastN = ab.byteLength / 8 })
+when(['places.tsv'], ab => ui.setPlaces(new TextDecoder().decode(ab).trim().split('\n').map(l => { const [n, x, y, r] = l.split('\t'); return [+x, +y, 18e3 / +r, n] })))
 
 window.dbg = () => ({
   cam, yr: state.yr, wk, wkN: state.wkN, sel: state.sel, layers: state.layers, draw,
