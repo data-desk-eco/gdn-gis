@@ -104,7 +104,7 @@ struct O{@builtin(position)p:vec4f,@location(0)@interpolate(flat)t:u32};
   let d=normalize(cb.xy/cb.w-ca.xy/ca.w);
   return O(vec4f(c.xy+vec2f(-d.y,d.x)*(f32(i&1u)*2.-1.)*v.ms.xy*${(1 / 4.5).toFixed(4)}*c.w,c.zw),tn);
 }
-const PAL=array<vec3f,10>(${palette},${rgb('4d5261')},${rgb('16181d')});
+const PAL=array<vec3f,10>(${palette},${rgb('4d5261')},${rgb('9096a0')});
 @fragment fn fs(@location(0)@interpolate(flat)t:u32)->@location(0)vec4f{
   if(PASS>.5){return vec4f(${rgb('ff2d9b')},1.);}
   let n=min(t,9u);
@@ -163,7 +163,7 @@ struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(
   let site=em>1.5&&em<2.5;
   let a=select(smoothstep(.13,.07,abs(length(q)-.89)),smoothstep(1.,.85,abs(q.x)+abs(q.y)),site);
   if(a<.01){discard;}
-  var col=select(select(vec3f(.55,.58,.64),vec3f(.07,.07,.07),em>.5),vec3f(.09,.09,.11),site);
+  var col=select(select(vec3f(.55,.58,.64),vec3f(.07,.07,.07),em>.5),vec3f(.565,.588,.627),site);
   if(em>2.5){col=vec3f(.88,.09,.06);}
   if(hot>.5){col=vec3f(0.,.55,.9);}
   return vec4f(col,a*fd*.95);

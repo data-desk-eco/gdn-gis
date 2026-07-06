@@ -15,8 +15,8 @@ export function makeUI({ M, state, cam, heightAt, repaint }) {
   // the two works severities (10, 11); click toggles the bit
   leg.innerHTML = MATERIALS.map(([hex, label, bit], i) =>
     `<div class=key data-b=${bit ?? (i > 3 ? 8 : 9)}><i style=background:#${hex}></i>${label}</div>`).join('')
-    + '<div class=key data-b=12><i style=background:#16181d></i>nts pipeline</div>'
-    + '<div class=key data-b=13><i class=dot style="background:#16181d;border-color:#16181d;border-radius:0;transform:rotate(45deg) scale(.8)"></i>nts site</div>'
+    + '<div class=key data-b=12><i style=background:#9096a0></i>nts pipeline</div>'
+    + '<div class=key data-b=13><i class=dot style="background:#9096a0;border-color:#9096a0;border-radius:0;transform:rotate(45deg) scale(.8)"></i>nts site</div>'
     + '<div class=key data-b=14><i class=dot style=border-color:#e0170f></i>fatal incident</div>'
     + '<div class=key data-b=10><i class=dot></i>emergency</div><div class=key data-b=11><i class=dot style=border-color:#8b8f99></i>urgent</div>'
   leg.onclick = e => {

@@ -143,7 +143,7 @@ async function pick(x, y) {
   const vp = cam.viewProj(), [bx0, bx1, by0, by1] = cam.cellRect()[4].map((v, i) => v + (i % 2 ? .1 : -.1))
   let best = 9 * dpr
   state.sel = -1
-  if (wk) for (let i = 0; i < state.wkN; i++) {
+  if (wk && cam.scale() >= TH) for (let i = 0; i < state.wkN; i++) {
     const wx = wk[i * 4], wy = wk[i * 4 + 1], when = wk[i * 4 + 2] && 1970 + wk[i * 4 + 2] / 365.2425, flag = wk[i * 4 + 3]
     if (wx < bx0 || wx > bx1 || wy < by0 || wy > by1) continue
     if (flag > 1.5) { if (!(state.mask >> (flag > 2.5 ? 14 : 13) & 1)) continue }

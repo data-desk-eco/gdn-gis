@@ -1,9 +1,11 @@
 // external open-data networks merged into the map artefacts beside the cadent
 // extract. sgn's per-authority mains (scripts/fetch-sgn.sh) and the nts pipe
 // corridors (scripts/fetch-nts.sh) arrive as one tsv row per feature —
-// `wkt \t pressure \t material-code \t inst_date` — with polygon rings (the
-// buffered nts corridors) read as closed lines. pressure NTS marks the
-// transmission network: map.rs tones it 9, always visible on the timeline.
+// `wkt \t pressure \t material-code \t inst_date`. the nts corridors are
+// constant-width buffer polygons, collapsed to their centreline (see
+// `centreline`) so they draw as hairlines; other rings read as closed lines.
+// pressure NTS marks the transmission network: map.rs tones it 9 (grey),
+// always visible on the timeline.
 // nts site boundaries become dist/sites.{f32,tsv}: centroid markers appended
 // to the works instance buffer (flag 2) with a lazy click card.
 
@@ -38,6 +40,88 @@ fn rings(w: &str) -> Vec<Vec<(f64, f64)>> {
         .collect()
 }
 
+/// collapse a buffered corridor polygon (the nts shapes: a constant ~24 m
+/// round-capped buffer of an unpublished centreline) back to that centreline.
+/// each boundary vertex pairs with the nearest vertex on the *opposite* wall —
+/// the global nearest excluding its own ring within a 90 m arc (so a vertex
+/// looks across the corridor, not along it; sibling rings let loops pair an
+/// outer wall with a hole). the pair midpoint is one axis point; walking the
+/// vertices in ring order traces the axis, and keeping only pairs where the
+/// vertex index precedes its partner's drops the mirror trace from the far
+/// wall. a chain breaks only where successive axis points jump — a junction,
+/// a cap, or a gap between corridors in a multipolygon.
+fn centreline(g: Vec<Vec<(f64, f64)>>) -> Vec<Vec<(f64, f64)>> {
+    fn d(a: (f64, f64), b: (f64, f64)) -> f64 {
+        (a.0 - b.0).hypot(a.1 - b.1)
+    }
+    let rs: Vec<Vec<(f64, f64)>> = g
+        .into_iter()
+        .map(|mut r| {
+            if r.len() > 1 && r.first() == r.last() {
+                r.pop();
+            }
+            r
+        })
+        .collect();
+    // cumulative arc length per ring, for the same-wall neighbour exclusion
+    let arcs: Vec<Vec<f64>> = rs
+        .iter()
+        .map(|r| {
+            let mut s = 0.0;
+            (0..r.len())
+                .map(|i| {
+                    let a = s;
+                    s += d(r[i], r[(i + 1) % r.len()]);
+                    a
+                })
+                .collect()
+        })
+        .collect();
+    let perim: Vec<f64> = rs.iter().zip(&arcs).map(|(r, a)| a.last().copied().unwrap_or(0.0) + if r.len() > 1 { d(r[r.len() - 1], r[0]) } else { 0.0 }).collect();
+    let arc = |q: usize, a: usize, b: usize| {
+        let g = (arcs[q][a] - arcs[q][b]).abs();
+        g.min(perim[q] - g)
+    };
+    let mut out = Vec::new();
+    for (ri, r) in rs.iter().enumerate() {
+        let mut chain: Vec<(f64, f64)> = Vec::new();
+        let mut close = |c: &mut Vec<(f64, f64)>| {
+            if c.len() > 1 {
+                out.push(std::mem::take(c));
+            } else {
+                c.clear();
+            }
+        };
+        for i in 0..r.len() {
+            let mut best: Option<(usize, usize, f64)> = None;
+            for (qi, q) in rs.iter().enumerate() {
+                for j in 0..q.len() {
+                    if qi == ri && arc(ri, i, j) < 90.0 {
+                        continue;
+                    }
+                    let dd = d(r[i], q[j]);
+                    if dd < best.map_or(120.0, |b| b.2) {
+                        best = Some((qi, j, dd));
+                    }
+                }
+            }
+            match best.filter(|&(qi, j, _)| (ri, i) < (qi, j)) {
+                Some((qi, j, _)) => {
+                    let mid = ((r[i].0 + rs[qi][j].0) / 2.0, (r[i].1 + rs[qi][j].1) / 2.0);
+                    // break where the axis leaps — cap, junction, or corridor gap
+                    if chain.last().is_some_and(|&p| d(p, mid) > 400.0) {
+                        close(&mut chain);
+                    }
+                    chain.push(mid);
+                }
+                None => close(&mut chain),
+            }
+        }
+        close(&mut chain);
+    }
+    out
+}
+
 pub fn rows(cfg: &ExtCfg) -> Vec<Row> {
     fn layer(p: &str) -> &str {
         match p {
@@ -59,7 +143,9 @@ pub fn rows(cfg: &ExtCfg) -> Vec<Row> {
             let mut c = ln.split('\t');
             let (w, p, m) = (c.next()?, c.next().unwrap_or(""), c.next().unwrap_or(""));
             let year = c.next().unwrap_or("").get(..4).and_then(|y| y.parse().ok()).unwrap_or(0);
-            let mut g = rings(w);
+            // nts corridors are constant-width buffer polygons — collapse them
+            // to their centreline so they draw as hairlines like every other main
+            let mut g = if p == "NTS" { centreline(rings(w)) } else { rings(w) };
             (!g.is_empty()).then(|| Row {
                 fid: None,
                 layer: layer(p).into(),

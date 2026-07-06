@@ -168,10 +168,11 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
         for (const o of layers.pipe.cells.values()) if (o.vis && o.vb) { p.setVertexBuffer(0, o.vb); p.draw(4, o.n) }
     }
 
-    // works only at street zoom; the nts sites appended after them always
-    if (state.wkN) {
+    // works and the appended timeless markers (nts sites, fatal incidents)
+    // both only from detail zoom in — markers freckle the whole-country view
+    if (state.wkN && s >= TH) {
       p.setPipeline(pipe.works); p.setVertexBuffer(0, state.wkVB)
-      if (s >= TH && state.wkN0) p.draw(4, state.wkN0)
+      if (state.wkN0) p.draw(4, state.wkN0)
       if (state.wkN > state.wkN0) p.draw(4, state.wkN - state.wkN0, 0, state.wkN0)
     }
 
