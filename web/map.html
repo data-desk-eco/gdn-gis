@@ -12,8 +12,8 @@ html,body{margin:0;height:100%;background:#fff;overflow:hidden;font:12px/1.4 'Je
 <div id=leg></div><div id=pl></div><div id=tl><button id=play>⏸&#xfe0e;</button><div id=rg><input id=los type=range><input id=yrs type=range></div><span id=ylab></span></div><div id=msg>loading…</div><div id=tp></div><a class="logo" href="https://research.datadesk.eco/" target="_blank" rel="noopener"><svg viewBox="0 0 734.66 733.34"> <path fill="currentColor" d="M144.68,0c-4.92,0-9.63,1.99-13.05,5.52L4.17,136.69C1.49,139.44,0,143.12,0,146.96v440.75c-.01,3.83,1.54,7.6,4.22,10.32l128.48,130.9c2.77,2.82,6.56,4.41,10.51,4.41h224.12c49.96,0,98.27-9.63,143.61-28.63,43.81-18.36,83.08-44.69,116.71-78.24,33.61-33.53,59.98-72.67,78.37-116.33,19.01-45.12,28.64-93.17,28.64-142.81s-9.72-97.68-28.88-142.97c-18.5-43.74-44.99-83.02-78.72-116.76-33.73-33.73-73.02-60.22-116.76-78.72C465.01,9.72,416.91,0,367.33,0H144.68ZM29.46,152.93L128.48,51.03V455.48c0,8.13,6.59,14.73,14.73,14.73h224.12c56.73,0,102.88-46.15,102.88-102.88s-46.15-102.88-102.88-102.88h-73.42v-102.77h73.42c17.17,0,34.01,2.09,50.25,6.15,1.62,.41,3.24,.83,4.85,1.28,2.42,.67,4.82,1.38,7.2,2.13,31.02,9.82,59.45,27,83.11,50.67,26.1,26.1,44.31,57.97,53.46,92.74,1.49,5.66,2.74,11.4,3.74,17.2,.29,1.66,.55,3.32,.8,4.99,1.48,10.01,2.23,20.19,2.23,30.49s-.75,20.48-2.23,30.49c-.25,1.67-.51,3.33-.8,4.99-1,5.8-2.25,11.54-3.74,17.2-9.15,34.77-27.36,66.65-53.46,92.74-23.67,23.67-52.09,40.86-83.11,50.67-2.39,.76-4.79,1.47-7.2,2.13-1.61,.44-3.23,.87-4.85,1.28-16.23,4.06-33.08,6.15-50.25,6.15H29.46V152.93Zm264.45,140.98h73.42c40.48,0,73.42,32.94,73.42,73.42s-32.94,73.42-73.42,73.42h-73.42v-146.84Zm384.96,204.79c-16.9,40.12-41.13,76.09-72.02,106.91-30.92,30.85-67.02,55.05-107.29,71.93-41.71,17.48-86.19,26.34-132.22,26.34H149.39l-99.57-101.44H367.33c31.73,0,62.53-6.22,91.52-18.48,28-11.84,53.14-28.79,74.73-50.38,6.75-6.75,13.04-13.84,18.86-21.26,12.82-16.32,23.37-34.22,31.51-53.47,7.66-18.12,12.97-36.95,15.87-56.26,1.74-11.59,2.61-23.36,2.61-35.26s-.87-23.67-2.61-35.26c-2.9-19.32-8.2-38.14-15.87-56.26-8.14-19.25-18.7-37.15-31.51-53.47-5.83-7.42-12.12-14.51-18.86-21.26-21.59-21.59-46.73-38.54-74.73-50.38-28.99-12.26-59.79-18.48-91.52-18.48h-88.15c-8.13,0-14.73,6.59-14.73,14.73V440.75h-106.51V29.46h209.39c45.61,0,89.85,8.93,131.5,26.55,40.23,17.02,76.37,41.39,107.4,72.42,31.04,31.04,55.4,67.17,72.42,107.4,17.62,41.64,26.55,85.89,26.55,131.5s-8.86,89.89-26.33,131.37Z"/> </svg></a>
 <script type=module>
 const MATS=[['ef4b3d','cast iron',0],['f28e2b','spun iron',1],['edc948','ductile iron',4],['ff2d9b','m.p. ductile iron'],['76b7b2','steel',5],['b07aa1','asbestos cement',2],['59a14f','pvc',6],['9c755f','lead',3],['4e93d0','polyethylene',7],['4d5261','unknown']]
-let mask=8191
-leg.innerHTML=MATS.map(([h,l,b],i)=>`<div class=key data-b=${b??(i>3?8:9)}><i style=background:#${h}></i>${l}</div>`).join('')+'<div class=key data-b=10><i class=dot></i>emergency</div><div class=key data-b=11><i class=dot style=border-color:#8b8f99></i>urgent</div><div class=key data-b=12><i class=dot style="background:#111;border-color:#111;border-radius:2px;transform:rotate(45deg)"></i>sites</div>'
+let mask=16383
+leg.innerHTML=MATS.map(([h,l,b],i)=>`<div class=key data-b=${b??(i>3?8:9)}><i style=background:#${h}></i>${l}</div>`).join('')+'<div class=key data-b=12><i class=dot style="background:#111;border-color:#111;border-radius:2px;transform:rotate(45deg)"></i>sites</div><div class=key data-b=10><i class=dot></i>emergency</div><div class=key data-b=11><i class=dot style=border-color:#8b8f99></i>urgent</div><div class=key data-b=13><i class=dot style=border-color:#e0170f></i>fatal</div>'
 leg.onclick=e=>{const k=e.target.closest('.key');if(k){mask^=1<<k.dataset.b;k.classList.toggle('off');draw()}}
 const v3=h=>`vec3f(${[0,2,4].map(i=>(parseInt(h.substr(i,2),16)/255).toFixed(3))})`,PAL=MATS.filter(m=>m[2]>=0).sort((a,b)=>a[2]-b[2]).map(m=>v3(m[0]))
 const die=t=>{msg.textContent=t;throw t}
@@ -25,7 +25,7 @@ const M=await(await fetch(D+'map.json')).json(),MX=M.minx,MY=M.miny,CELL=M.cell,
 const BU=GPUBufferUsage,TU=GPUTextureUsage,Q=dev.queue
 const[uni,uni2]=[0,0].map(_=>dev.createBuffer({size:128,usage:BU.UNIFORM|BU.COPY_DST})),lutB=dev.createBuffer({size:N*4,usage:BU.STORAGE|BU.COPY_DST})
 const tex=d=>dev.createTexture({size:d,format:'r16uint',usage:TU.TEXTURE_BINDING|TU.COPY_DST}),t0T=tex([T0N,T0N]),t1T=tex([T1P,T1P,T1L])
-let tick=0,sel=-1,wkVB,wkN=0,wkW=0,wk,det,sdet,baseVB,baseN=0,coastVB,coastN=0,places=[],tofs,timer,t0cpu,yr=Y0,lo=Y0,playing=true,pt0=0
+let tick=0,sel=-1,wkVB,wkN=0,wkW=0,wkS=0,wk,det,sdet,fdet,baseVB,baseN=0,coastVB,coastN=0,places=[],tofs,timer,t0cpu,yr=Y0,lo=Y0,playing=true,pt0=0
 const pool=[...Array(40)].map(()=>pl.appendChild(document.createElement('span')))
 const cam={t:[MX+NC*CELL/2,MY+NR*CELL/2],d:Math.max(NC,NR)*CELL/1.9/TAN,a:0,p:0},S=()=>1/(cam.d*TAN),maxP=()=>1.38*clamp(2*S()/TH-.6,0,1)
 const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],norm=a=>{const l=Math.hypot(...a);return a.map(v=>v/l)}
@@ -58,11 +58,11 @@ let p=world(m.x,select(q.xy,q.zw,(i&1u)==1u));return v.vp*vec4f(p,hgt(p)+select(
 let p=world(b.z,select(select(a.xy,a.zw,i==1u),b.xy,i==2u));return v.vp*vec4f(p,hgt(p)+f32(b.w&0xffu)*5e-4,1.);}
 @fragment fn fsr()->@location(0)vec4f{return vec4f(.855,.865,.885,1.);}`})
 const wmod=dev.createShaderModule({code:WG+`struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32,@location(3)@interpolate(flat)fd:f32};
-@vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f,@location(1)df:vec2f)->O{if((df.y<1.5&&((df.x>0.&&1970.+df.x/365.2425>v.ms.w)||select(v.tw2.z>0.,1970.+df.x/365.2425<v.tw2.z,df.x>0.)||v.cd*${(TH*TAN).toFixed(6)}>1.))||((u32(v.tw2.y)>>select(select(11u,10u,df.y>.5),12u,df.y>1.5))&1u)==0u){return O(OFF,vec2f(0.),0.,0.,0.);}
+@vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f,@location(1)df:vec2f)->O{if((df.y<1.5&&((df.x>0.&&1970.+df.x/365.2425>v.ms.w)||select(v.tw2.z>0.,1970.+df.x/365.2425<v.tw2.z,df.x>0.)||v.cd*${(TH*TAN).toFixed(6)}>1.))||((u32(v.tw2.y)>>select(select(11u,10u,df.y>.5),select(12u,13u,df.y>2.5),df.y>1.5))&1u)==0u){return O(OFF,vec2f(0.),0.,0.,0.);}
 let q=vec2f(vec2u(i&1u,i>>1u))*2.-1.;let hot=select(0.,1.,f32(inst)==v.ms.z);let c=v.vp*vec4f(pt,hgt(pt)+.004,1.);let fd=1.-smoothstep(2.5,4.,c.w/v.cd);if(fd<.01){return O(OFF,vec2f(0.),0.,0.,0.);}
 let r=v.ms.xy*select(1.,1.8,hot>.5)*select(1.,1.3,df.y>1.5);return O(vec4f(c.xy+q*r*c.w,c.zw),q,hot,df.y,fd);}
-@fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32,@location(3)@interpolate(flat)fd:f32)->@location(0)vec4f{let a=select(smoothstep(.13,.07,abs(length(q)-.89)),smoothstep(1.,.86,abs(q.x)+abs(q.y)),em>1.5);if(a<.01){discard;}
-return vec4f(select(select(vec3f(.55,.58,.64),vec3f(.07,.07,.07),em>.5),vec3f(0.,.55,.9),hot>.5),a*fd*.95);}`})
+@fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32,@location(3)@interpolate(flat)fd:f32)->@location(0)vec4f{let a=select(smoothstep(.13,.07,abs(length(q)-.89)),smoothstep(1.,.86,abs(q.x)+abs(q.y)),em>1.5&&em<2.5);if(a<.01){discard;}
+return vec4f(select(select(select(vec3f(.55,.58,.64),vec3f(.07,.07,.07),em>.5),vec3f(.88,.09,.06),em>2.5),vec3f(0.,.55,.9),hot>.5),a*fd*.95);}`})
 const cmod=dev.createShaderModule({code:WG+`struct O{@builtin(position)p:vec4f,@location(0)f:f32};
 @vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u)->O{let c=v.vp*vec4f(vec2f(select(q.xy,q.zw,i==1u))*.02,.001,1.);return O(c,1.-smoothstep(6.,12.,c.w/v.cd));}
 @fragment fn fs(@location(0)f:f32)->@location(0)vec4f{return vec4f(0.,0.,0.,f);}
@@ -139,8 +139,9 @@ const proj=(vp,x,y,z)=>{const w=vp[3]*x+vp[7]*y+vp[11]*z+vp[15];return w<=0?null
 const bCache=new Map()
 async function pick(x,y){const vp=vpMat(),[bx0,bx1,by0,by1]=rect()[4].map((v,i)=>v+(i%2?.1:-.1)),zt=S()>=TH;let bd=9*dpr;sel=-1
  if(wk)for(let i=0;i<wkN;i++){const f=wk[i*4+3],wx=wk[i*4],wy=wk[i*4+1],wd=wk[i*4+2]&&1970+wk[i*4+2]/365.2425
-  if(wx<bx0||wx>bx1||wy<by0||wy>by1||!(mask>>(f>1.5?12:f>.5?10:11)&1)||f<1.5&&(!zt||(wd?wd>yr&&yr<=Y1||wd<lo:lo>Y0)))continue
+  if(wx<bx0||wx>bx1||wy<by0||wy>by1||!(mask>>(f>2.5?13:f>1.5?12:f>.5?10:11)&1)||f<1.5&&(!zt||(wd?wd>yr&&yr<=Y1||wd<lo:lo>Y0)))continue
   const p=proj(vp,wx,wy,hgtC(wx,wy)+.004);if(!p||p[2]>3.2*cam.d)continue;const d=Math.hypot(p[0]-x,p[1]-y);if(d<bd){bd=d;sel=i}}
+ if(sel>=wkS&&fdet){const[nm,pl,yy,dd,inj]=fdet[sel-wkS].split('\t');return tip([nm,pl,`${yy} explosion · ${dd} killed${+inj?', '+inj+' injured':''}`])}
  if(sel>=wkW&&sdet){const[nm,kind]=sdet[sel-wkW].split('\t');return tip([nm,kind+' · national transmission system'])}
  if(sel>=0){det??=(await(await fetch(D+'works.tsv')).text()).split('\n');const[permit,cat,status,street,town,auth,start,end]=det[sel].split('\t')
   return tip([`${street||'(no street)'}${town?', '+town:''}`,`${cat} · ${status.toLowerCase()}`,start+(end&&end!==start?' → '+end:''),`${auth.toLowerCase()} · permit ${permit}`])}
@@ -165,7 +166,7 @@ cv.onpointermove=e=>{if(!pts.has(e.pointerId))return;pts.set(e.pointerId,e)
 cv.onwheel=e=>{e.preventDefault();dolly(Math.exp(e.deltaY*.003),e.offsetX*dpr,e.offsetY*dpr);draw();sched()}
 addEventListener('resize',resize)
 const get=f=>fetch(D+f).then(r=>r.ok?r.arrayBuffer():null).catch(()=>null);resize()
-const[pidx,baseAB,t0AB,t1idx,bidx,btofs,ridx,wkAB,siAB,siTSV,coAB,plAB]=await Promise.all(['map.idx','map.base.bin','terr0.bin','terr1.idx','bldg.idx','bldg.tofs','roof.idx','works.f32','sites.f32','sites.tsv','coast.u16','places.tsv'].map(get))
+const[pidx,baseAB,t0AB,t1idx,bidx,btofs,ridx,wkAB,siAB,siTSV,faAB,faTSV,coAB,plAB]=await Promise.all(['map.idx','map.base.bin','terr0.bin','terr1.idx','bldg.idx','bldg.tofs','roof.idx','works.f32','sites.f32','sites.tsv','fatal.f32','fatal.tsv','coast.u16','places.tsv'].map(get))
 if(!pidx||!baseAB)die('map artefacts missing — run the extractor')
 const vbload=by=>(id,b)=>({vb:mkbuf(b),n:b.byteLength/by})
 mklayer('pipe','map.bin',new Uint32Array(pidx),12,700,TH,vbload(12));baseVB=mkbuf(baseAB);baseN=baseAB.byteLength/12
@@ -178,7 +179,7 @@ if(t1idx){const bits=new Uint8Array(t1idx),cnt=Uint8Array.from({length:N},(_,i)=
  layers.terr.re=(id,e)=>{if(e.cpu&&e.l==null)e.l=toL(id,e.cpu)}}
 if(bidx&&btofs){tofs=new Uint32Array(btofs);mklayer('bldg','bldg.bin',new Uint32Array(bidx),12,250,BTH,vbload(12))}
 if(ridx)mklayer('roof','roof.bin',new Uint32Array(ridx),16,250,BTH,vbload(16))
-if(wkAB||siAB){wkW=(wkAB?.byteLength??0)/16;const u=new Uint8Array(wkW*16+(siAB?.byteLength??0));if(wkAB)u.set(new Uint8Array(wkAB));if(siAB)u.set(new Uint8Array(siAB),wkW*16);wk=new Float32Array(u.buffer);wkVB=mkbuf(u);wkN=wk.length/4;sdet=siTSV&&new TextDecoder().decode(siTSV).trim().split('\n')}
+if(wkAB||siAB||faAB){wkW=(wkAB?.byteLength??0)/16;wkS=wkW+(siAB?.byteLength??0)/16;const u=new Uint8Array(wkS*16+(faAB?.byteLength??0));if(wkAB)u.set(new Uint8Array(wkAB));if(siAB)u.set(new Uint8Array(siAB),wkW*16);if(faAB)u.set(new Uint8Array(faAB),wkS*16);wk=new Float32Array(u.buffer);wkVB=mkbuf(u);wkN=wk.length/4;const tsv=b=>b&&new TextDecoder().decode(b).trim().split('\n');sdet=tsv(siTSV);fdet=tsv(faTSV)}
 if(coAB){coastVB=mkbuf(coAB);coastN=coAB.byteLength/8}
 if(plAB)places=new TextDecoder().decode(plAB).trim().split('\n').map(l=>{const[n,x,y,r]=l.split('\t');return[+x,+y,18e3/+r,n]})
 Q.writeBuffer(lutB,0,lut);msg.remove();await update();requestAnimationFrame(anim)

@@ -21,6 +21,7 @@ scripts/fetch-buildings.sh                             # Geofabrik England OSM e
 scripts/fetch-basemap.py                               # GB coastline (ONS) + place names (OS Open Names)
 scripts/build-years.sh                                 # laid-year sidecar (needs duckdb)
 scripts/build-sites.sh                                 # NTS sites layer (needs duckdb)
+scripts/build-fatal.sh                                 # fatal-incidents layer (needs duckdb)
 ```
 
 `USER` / `PASS` are your Veracity account credentials. `fetch-lidar.py` and
@@ -75,4 +76,7 @@ Alongside it, the extractor writes the WebGPU map artefacts (`dist/map.*`,
 `scripts/fetch-basemap.py` adds the basemap pair (`coast.u16`, `places.tsv`)
 directly to `dist/`, and `scripts/build-sites.sh` the sites pair (`sites.f32`,
 `sites.tsv` — National Gas Transmission's above-ground installations,
-compressor stations and terminals, shown as clickable markers).
+compressor stations and terminals, shown as clickable markers), and
+`scripts/build-fatal.sh` the fatal pair (`fatal.f32`, `fatal.tsv` — a
+hand-curated record of fatal gas-main explosions from `scripts/fatal.csv`,
+shown as red circles).
