@@ -1,7 +1,7 @@
 name: Deploy
 
-# publishes the self-contained webgpu frontend to pages (ltrg.co.uk/gdn-gis);
-# the heavy range-served artefacts live in the gdn-gis s3 archive, not here.
+# publishes the self-contained webgpu frontend to pages (research.datadesk.eco/gdn-gis);
+# the heavy range-served artefacts live in the gdn-gis-data gcs bucket, not here.
 
 on:
   push:

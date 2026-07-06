@@ -2,11 +2,11 @@
 <title>UK gas network</title><link rel=icon href=data:,><style>
 html,body{margin:0;height:100%;background:#fff;overflow:hidden;font:13px/1.4 system-ui,sans-serif;color:#444a55}canvas{display:block;width:100vw;height:100vh;cursor:grab;touch-action:none}canvas:active{cursor:grabbing}
 #hud,#leg{position:fixed;top:12px;pointer-events:none;text-shadow:0 1px 3px #fff}#hud{left:14px}#hud b{font-size:15px;color:#111}#hud small{opacity:.55}#leg{right:14px;display:grid;grid-template-columns:auto auto;gap:1px 16px;pointer-events:auto;cursor:pointer;user-select:none}
-.key{display:flex;align-items:center;gap:6px;opacity:.95}.key.off{opacity:.25}.key i{width:14px;height:3px;border-radius:2px;flex:none}.key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #222;margin:0 2.5px}#msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}#tp{position:fixed;left:14px;top:36px;pointer-events:none;text-shadow:0 1px 3px #fff}#pl span{position:fixed;transform:translate(-50%,-50%);pointer-events:none;white-space:nowrap;color:#5a616e;text-shadow:0 0 3px #fff,0 0 3px #fff}#xm{position:fixed;transform:translate(-50%,-50%);pointer-events:none;color:#111;font-weight:700;display:none}#tp:empty{display:none}#tp b{color:#111}#tp span{color:#444a55}
+.key{display:flex;align-items:center;gap:6px;opacity:.95}.key.off{opacity:.25}.key i{width:14px;height:3px;border-radius:2px;flex:none}.key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #222;margin:0 2.5px}#msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}#tp{position:fixed;left:14px;top:36px;pointer-events:none;text-shadow:0 1px 3px #fff}#pl span{position:fixed;transform:translate(-50%,-50%);pointer-events:none;white-space:nowrap;color:#5a616e;text-shadow:0 0 3px #fff,0 0 3px #fff}#tp:empty{display:none}#tp b{color:#111}#tp span{color:#444a55}
 #tl{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;background:#ffffffd0;border:1px solid #00000022;border-radius:8px;padding:6px 12px;backdrop-filter:blur(4px)}#tl button{all:unset;cursor:pointer;width:16px;text-align:center;color:#111}#tl input{width:min(34vw,300px);accent-color:#4e93d0}#tl span{font-variant-numeric:tabular-nums;width:34px;color:#111}</style>
 <canvas id=cv></canvas>
 <div id=hud><b>UK gas network</b></div>
-<div id=leg></div><div id=pl></div><div id=xm>×</div><div id=tl><button id=play>⏸</button><input id=yrs type=range><span id=ylab></span></div><div id=msg>loading…</div><div id=tp></div>
+<div id=leg></div><div id=pl></div><div id=tl><button id=play>⏸</button><input id=yrs type=range><span id=ylab></span></div><div id=msg>loading…</div><div id=tp></div>
 <script type=module>
 const MATS=[['ef4b3d','cast iron',0],['f28e2b','spun iron',1],['edc948','ductile iron',4],['ff2d9b','m.p. ductile iron'],['76b7b2','steel',5],['b07aa1','asbestos cement',2],['59a14f','pvc',6],['9c755f','lead',3],['4e93d0','polyethylene',7],['4d5261','unknown']]
 let mask=4095
@@ -17,7 +17,7 @@ const die=t=>{msg.textContent=t;throw t}
 if(!navigator.gpu)die('this browser has no webgpu')
 const dev=await(await navigator.gpu.requestAdapter())?.requestDevice()||die('no webgpu adapter')
 const ctx=cv.getContext('webgpu'),fmt=navigator.gpu.getPreferredCanvasFormat();ctx.configure({device:dev,format:fmt,alphaMode:'opaque'})
-const clamp=(v,a,b)=>v<a?a:v>b?b:v,D=/^(localhost|127\.|\[?::1)/.test(location.hostname)?'../dist/':'https://gdn-gis-916338043936.s3.amazonaws.com/'
+const clamp=(v,a,b)=>v<a?a:v>b?b:v,D=/^(localhost|127\.|\[?::1)/.test(location.hostname)?'../dist/':'https://storage.googleapis.com/gdn-gis-data/'
 const M=await(await fetch(D+'map.json')).json(),MX=M.minx,MY=M.miny,CELL=M.cell,NC=M.ncols,NR=M.nrows,N=NC*NR,TH=M.detail_scale,BTH=M.bldg_scale,[Y0,Y1]=M.yr,T0N=M.t0.n,T0S=M.t0.step,T1P=M.t1.p,T1B=T1P*T1P*2,T1L=256,EX=1.5,TAN=Math.tan(25*Math.PI/180)
 const BU=GPUBufferUsage,TU=GPUTextureUsage,Q=dev.queue
 const uni=dev.createBuffer({size:128,usage:BU.UNIFORM|BU.COPY_DST}),lutB=dev.createBuffer({size:N*4,usage:BU.STORAGE|BU.COPY_DST})
@@ -109,9 +109,7 @@ function draw(){const s=S(),vp=vpMat(),bb=rect()[4]
   if(x<bb[0]||x>bb[1]||y<bb[2]||y>bb[3])continue
   const q=proj(vp,x,y,hgtC(x,y));if(!q||q[0]<0||q[0]>cv.width||q[1]<0||q[1]>cv.height||hits.some(h=>Math.hypot(h[0]-q[0],h[1]-q[1])<64*dpr))continue
   hits.push(q);pool[li].textContent=n;pool[li++].style.cssText=`left:${q[0]/dpr}px;top:${q[1]/dpr}px;font-size:${thr<.004?12.5:thr<.02?11:thr<.1?10:9}px`}
- for(;li<40;li++)pool[li].style.display='none'
- const mq=proj(vp,625.384,256.485,hgtC(625.384,256.485))
- xm.style.cssText=mq?`display:block;left:${mq[0]/dpr}px;top:${mq[1]/dpr}px`:''}
+ for(;li<40;li++)pool[li].style.display='none'}
 const update=()=>{const ps=Object.values(layers).map(page);draw();return Promise.all(ps)}
 const proj=(vp,x,y,z)=>{const w=vp[3]*x+vp[7]*y+vp[11]*z+vp[15];return w<=0?null:[(vp[0]*x+vp[4]*y+vp[8]*z+vp[12])/w*.5*cv.width+cv.width/2,cv.height/2-(vp[1]*x+vp[5]*y+vp[9]*z+vp[13])/w*.5*cv.height]}
 const bCache=new Map()
