@@ -93,10 +93,14 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
   const uploadCoarse = ab => Q.writeTexture({ texture: coarseT }, ab, { bytesPerRow: T0N * 2 }, [T0N, T0N])
 
   let depthT
-  const writeUni = (buf, vp, cam, grid) => Q.writeBuffer(buf, 0, new Float32Array([
-    ...vp, state.RPX * 2 / canvas.width, state.RPX * 2 / canvas.height, state.sel, state.yr > Y1 ? 9e3 : state.yr,
-    ...grid, state.mask, state.lo > Y0 ? state.lo : 0, cam.pitch, cam.dist,
-  ]))
+  const uniData = new Float32Array(32)  // reused every frame; writeBuffer copies synchronously
+  const writeUni = (buf, vp, cam, grid) => {
+    uniData.set(vp)
+    uniData.set([state.RPX * 2 / canvas.width, state.RPX * 2 / canvas.height, state.sel, state.yr > Y1 ? 9e3 : state.yr], 16)
+    uniData.set(grid, 20)
+    uniData.set([state.mask, state.lo > Y0 ? state.lo : 0, cam.pitch, cam.dist], 25)
+    Q.writeBuffer(buf, 0, uniData)
+  }
 
   // one pass draws everything, back to front: building fills + roofs write
   // depth so walls occlude; the coast stencil fan classifies sea; wire grids,

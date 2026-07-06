@@ -46,21 +46,28 @@ const heightAt = (x, y) => {
 const cam = makeCamera(M, cv, heightAt)
 state.cam = cam
 const renderer = makeRenderer({ dev, ctx, fmt, canvas: cv, M, state })
-const paging = makePaging({ dataUrl: D, ncols: NC, scale: cam.scale, cellRect: cam.cellRect, repaint: () => draw() })
+const paging = makePaging({ dataUrl: D, ncols: NC, scale: cam.scale, cellRect: cam.cellRect, repaint: () => repaint() })
 state.layers = paging.layers
 
 function draw() {
   const { vp, bb, s } = renderer.draw()
   ui.placeLabels(vp, bb, s)
 }
-const ui = makeUI({ M, state, cam, heightAt, repaint: () => draw() })
+// coalesce repaints: however many events land between frames, render once
+let dirty = false
+const repaint = () => {
+  if (dirty) return
+  dirty = true
+  requestAnimationFrame(() => { dirty = false; draw() })
+}
+const ui = makeUI({ M, state, cam, heightAt, repaint })
 
 // paging runs when the camera has settled for 110 ms
 let timer
 const sched = () => { clearTimeout(timer); timer = setTimeout(update, 110) }
-const update = () => { const done = paging.update(); draw(); return done }
+const update = () => { const done = paging.update(); repaint(); return done }
 
-const resize = () => { cv.width = innerWidth * dpr | 0; cv.height = innerHeight * dpr | 0; draw(); sched() }
+const resize = () => { cv.width = innerWidth * dpr | 0; cv.height = innerHeight * dpr | 0; repaint(); sched() }
 addEventListener('resize', resize)
 
 // --- input: drag pans, right-drag/shift-drag orbits, wheel dollies to the
@@ -94,7 +101,7 @@ cv.onpointermove = e => {
     cam.yaw += t.a - pinchA
     cam.pitch = clamp(cam.pitch - (t.my - pinchY) * .004, 0, cam.maxPitch())
     pinchD = t.d; pinchA = t.a; pinchY = t.my; moved = 9
-    draw(); sched()
+    repaint(); sched()
     return
   }
   if (btn < 0) return
@@ -108,9 +115,9 @@ cv.onpointermove = e => {
     cam.yaw -= dx * .004
     cam.pitch = clamp(cam.pitch - dy * .004, 0, cam.maxPitch())
   }
-  draw(); sched()
+  repaint(); sched()
 }
-cv.onwheel = e => { e.preventDefault(); cam.dolly(Math.exp(e.deltaY * .003), e.offsetX * dpr, e.offsetY * dpr); draw(); sched() }
+cv.onwheel = e => { e.preventDefault(); cam.dolly(Math.exp(e.deltaY * .003), e.offsetX * dpr, e.offsetY * dpr); repaint(); sched() }
 
 // --- picking: nearest works ring by screen distance, else a named building
 // in the clicked cell. detail text rides in lazily fetched tsv sidecars ---
