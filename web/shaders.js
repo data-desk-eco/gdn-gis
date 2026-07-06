@@ -140,11 +140,14 @@ struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(
   if((df.x>0.&&1970.+df.x/365.2425>v.ms.w)
     ||select(v.tw2.z>0.,1970.+df.x/365.2425<v.tw2.z,df.x>0.)
     ||((u32(v.tw2.y)>>select(11u,10u,df.y>.5))&1u)==0u){return O(OFF,vec2f(0.),0.,0.,0.);}
+  // distance-cull on a flat-ground position before paying for the terrain
+  // sample — most of the 144k instances are far outside the fade radius
+  let ground=v.vp*vec4f(pt,0.,1.);
+  let fd=1.-smoothstep(2.5,4.,ground.w/v.cd);
+  if(fd<.01){return O(OFF,vec2f(0.),0.,0.,0.);}
   let q=vec2f(vec2u(i&1u,i>>1u))*2.-1.;
   let hot=select(0.,1.,f32(inst)==v.ms.z);
   let c=v.vp*vec4f(pt,terrainHeight(pt)+.004,1.);
-  let fd=1.-smoothstep(2.5,4.,c.w/v.cd);
-  if(fd<.01){return O(OFF,vec2f(0.),0.,0.,0.);}
   let r=v.ms.xy*select(1.,1.8,hot>.5);
   return O(vec4f(c.xy+q*r*c.w,c.zw),q,hot,df.y,fd);
 }
