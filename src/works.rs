@@ -8,7 +8,9 @@
 //   works.f32  one record per permit: x y (bng km, polygon centroid) day (unix
 //              days) flag (1 = emergency, 0 = urgent). sorted by day then permit.
 //   works.tsv  same order: permit, category, status, street, town, authority,
-//              start, end — fetched lazily by map.html for the click card.
+//              start, end, traffic management, location type — fetched lazily by
+//              map.html for the click card. permits whose final permit_status is
+//              cancelled/refused/revoked (digs that never happened) are dropped.
 
 use std::collections::{hash_map::Entry, HashMap};
 use std::fs::File;
@@ -43,6 +45,9 @@ struct Ev {
     work_category: Option<String>,
     work_category_ref: Option<String>,
     work_status: Option<String>,
+    permit_status: Option<String>,
+    traffic_management_type: Option<String>,
+    works_location_type: Option<String>,
     proposed_start_date: Option<String>,
     proposed_end_date: Option<String>,
     actual_start_date_time: Option<String>,
@@ -128,9 +133,12 @@ pub fn write(w: &WorksCfg, m: &MapCfg) {
             a
         });
 
-    let mut rows: Vec<([f32; 4], [String; 8])> = best
+    let mut rows: Vec<([f32; 4], [String; 10])> = best
         .into_values()
         .filter_map(|e| {
+            if matches!(e.permit_status.as_deref(), Some("cancelled" | "refused" | "revoked")) {
+                return None;
+            }
             let (x, y) = centroid(e.works_location_coordinates.as_deref()?)?;
             let start = e.actual_start_date_time.clone().or(e.proposed_start_date.clone()).unwrap_or_default();
             let end = e.actual_end_date_time.clone().or(e.proposed_end_date.clone()).unwrap_or_default();
@@ -147,6 +155,8 @@ pub fn write(w: &WorksCfg, m: &MapCfg) {
                     f(e.highway_authority),
                     start.get(..10).unwrap_or("").into(),
                     end.get(..10).unwrap_or("").into(),
+                    f(e.traffic_management_type),
+                    f(e.works_location_type),
                 ],
             ))
         })
