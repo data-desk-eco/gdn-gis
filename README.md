@@ -84,8 +84,9 @@ release normalised to the same vocabulary (`pressure_code`, `diameter_mm`,
 `material`, `host_*` / `inserted`; WKB MultiLineStrings in OGC:CRS84).
 
 Alongside it, the extractor writes the WebGPU map artefacts (`dist/map.*`,
-`terr*.bin`, `bldg.*`, `works.*`, `sites.*`) served by `web/map.html` — the
-pipe layer merges the Cadent extract with the SGN and NTS tsvs from `[ext]`
-in `config.toml`, and SGN segments carry their real install years;
-`scripts/fetch-basemap.py` adds the basemap pair (`coast.u16`, `places.tsv`)
-directly to `dist/`.
+`terr*.bin`, `bldg.*`, `works.*`, and `sites.*` — National Gas Transmission's
+above-ground installations, compressor stations and terminals as clickable
+markers) served by `web/map.html`. The pipe layer merges the Cadent extract
+with the SGN and NTS tsvs from `[ext]` in `config.toml`, and SGN segments
+carry their real install years; `scripts/fetch-basemap.py` adds the basemap
+pair (`coast.u16`, `places.tsv`) directly to `dist/`.
