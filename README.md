@@ -53,7 +53,8 @@ The full extraction (2.7 GB, 168k tiles) takes ~30 s.
 
 ### 3. View the map
 
-`web/map.html` is a standalone WebGPU map of the whole network. WebGPU needs
+`web/map.html` (plus its ES modules alongside — no build step) is a WebGPU map
+of the whole network. WebGPU needs
 http(s), and the map's per-cell fetches need HTTP range requests, so serve it
 with the bundled range-capable server:
 
