@@ -24,7 +24,7 @@ const TH = M.detail_scale, BTH = M.bldg_scale, [Y0, Y1] = M.yr
 const dpr = Math.min(devicePixelRatio || 1, 2)
 const state = {
   dpr, RPX: 4.5 * dpr,           // works-ring radius in device px
-  mask: 16383,                   // legend visibility bits
+  mask: 32767,                   // legend visibility bits
   sel: -1,                       // picked works instance
   yr: Y0, lo: Y0, playing: true, // laid-year window
   baseN: 0, coastN: 0, wkN: 0, wkN0: 0,
@@ -134,9 +134,10 @@ cv.onwheel = e => { e.preventDefault(); cam.dolly(Math.exp(e.deltaY * .003), e.o
 // building in the clicked cell. detail text rides in lazily fetched tsv
 // sidecars. sites (flag 2, appended after the works records) are timeless and
 // pickable at any zoom; works only at street zoom ---
-let wk, wkN0 = 0, detP, siteP, tofs
+let wk, wkN0 = 0, wkN1 = 0, detP, siteP, fatP, tofs
 const details = () => detP ??= fetch(D + 'works.tsv').then(r => r.text()).then(t => t.split('\n'))
 const siteDetails = () => siteP ??= fetch(D + 'sites.tsv').then(r => r.text()).then(t => t.split('\n'))
+const fatalDetails = () => fatP ??= fetch(D + 'fatal.tsv').then(r => r.text()).then(t => t.split('\n'))
 const bldgNames = new Map()
 async function pick(x, y) {
   const vp = cam.viewProj(), [bx0, bx1, by0, by1] = cam.cellRect()[4].map((v, i) => v + (i % 2 ? .1 : -.1))
@@ -145,7 +146,7 @@ async function pick(x, y) {
   if (wk) for (let i = 0; i < state.wkN; i++) {
     const wx = wk[i * 4], wy = wk[i * 4 + 1], when = wk[i * 4 + 2] && 1970 + wk[i * 4 + 2] / 365.2425, flag = wk[i * 4 + 3]
     if (wx < bx0 || wx > bx1 || wy < by0 || wy > by1) continue
-    if (flag > 1.5) { if (!(state.mask >> 13 & 1)) continue }
+    if (flag > 1.5) { if (!(state.mask >> (flag > 2.5 ? 14 : 13) & 1)) continue }
     else if (cam.scale() < TH
       || !(state.mask >> (flag > .5 ? 10 : 11) & 1)
       || (when ? when > state.yr && state.yr <= Y1 || when < state.lo : state.lo > Y0)) continue
@@ -155,6 +156,10 @@ async function pick(x, y) {
     if (d < best) { best = d; state.sel = i }
   }
   if (state.sel >= 0) {
+    if (wk[state.sel * 4 + 3] > 2.5) {
+      const [nm, pl, yy, dd, inj] = (await fatalDetails())[state.sel - wkN1].split('\t')
+      return ui.tip([nm, pl, `${yy} explosion · ${dd} killed${+inj ? ', ' + inj + ' injured' : ''}`])
+    }
     if (wk[state.sel * 4 + 3] > 1.5) {
       const [loc, fac] = (await siteDetails())[state.sel - wkN0].split('\t')
       return ui.tip([loc || '(unnamed site)', `national transmission · ${(fac || 'site').toLowerCase()}`])
@@ -196,7 +201,7 @@ async function pick(x, y) {
 // arrives, so the map is alive in one round trip instead of ten megabytes ---
 const get = f => fetch(D + f).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null)
 resize()
-const F = Object.fromEntries(['map.idx', 'map.base.bin', 'terr0.bin', 'terr1.idx', 'bldg.idx', 'bldg.tofs', 'roof.idx', 'works.f32', 'sites.f32', 'coast.u16', 'places.tsv'].map(f => [f, get(f)]))
+const F = Object.fromEntries(['map.idx', 'map.base.bin', 'terr0.bin', 'terr1.idx', 'bldg.idx', 'bldg.tofs', 'roof.idx', 'works.f32', 'sites.f32', 'fatal.f32', 'coast.u16', 'places.tsv'].map(f => [f, get(f)]))
 const when = (keys, use) => Promise.all(keys.map(k => F[k])).then(abs => { if (abs.every(Boolean)) { use(...abs); sched() } })
 
 const [pipeIdx, baseAB] = await Promise.all([F['map.idx'], F['map.base.bin']])
@@ -225,13 +230,16 @@ when(['bldg.idx', 'bldg.tofs'], (idx, tf) => {
   paging.add('bldg', { blob: 'bldg.bin', counts: new Uint32Array(idx), bytes: 12, cap: 250, gate: BTH, load: vbload(12) })
 })
 when(['roof.idx'], idx => paging.add('roof', { blob: 'roof.bin', counts: new Uint32Array(idx), bytes: 16, cap: 250, gate: BTH, load: vbload(16) }))
-// works + nts sites share the one instance buffer: works first, sites (flag 2) after
-Promise.all([F['works.f32'], F['sites.f32']]).then(([w, s]) => {
-  if (!w && !s) return
+// works + nts sites + fatal incidents share the one instance buffer: works
+// first, sites (flag 2), then fatal (flag 3, red rings) after
+Promise.all([F['works.f32'], F['sites.f32'], F['fatal.f32']]).then(([w, s, f]) => {
+  if (!w && !s && !f) return
   wkN0 = state.wkN0 = (w?.byteLength ?? 0) / 16
-  wk = new Float32Array(((w?.byteLength ?? 0) + (s?.byteLength ?? 0)) / 4)
+  wkN1 = wkN0 + (s?.byteLength ?? 0) / 16
+  wk = new Float32Array(((w?.byteLength ?? 0) + (s?.byteLength ?? 0) + (f?.byteLength ?? 0)) / 4)
   if (w) wk.set(new Float32Array(w))
   if (s) wk.set(new Float32Array(s), wkN0 * 4)
+  if (f) wk.set(new Float32Array(f), wkN1 * 4)
   state.wkVB = renderer.makeBuffer(wk)
   state.wkN = wk.length / 4
   sched()

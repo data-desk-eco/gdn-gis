@@ -26,6 +26,7 @@ scripts/fetch-lidar.py                                 # EA 1 m LiDAR DTM (resum
 scripts/fetch-buildings.sh                             # Geofabrik UK OSM extract
 scripts/fetch-basemap.py                               # GB coastline (ONS) + place names (OS Open Names)
 scripts/build-years.sh                                 # laid-year sidecar (needs duckdb)
+scripts/build-fatal.sh                                 # fatal-incidents layer (needs duckdb)
 ```
 
 `USER` / `PASS` are your Veracity account credentials. `fetch-lidar.py` and
@@ -89,4 +90,7 @@ above-ground installations, compressor stations and terminals as clickable
 markers) served by `web/map.html`. The pipe layer merges the Cadent extract
 with the SGN and NTS tsvs from `[ext]` in `config.toml`, and SGN segments
 carry their real install years; `scripts/fetch-basemap.py` adds the basemap
-pair (`coast.u16`, `places.tsv`) directly to `dist/`.
+pair (`coast.u16`, `places.tsv`) directly to `dist/`, and
+`scripts/build-fatal.sh` the fatal pair (`fatal.f32`, `fatal.tsv` — a
+hand-curated record of fatal gas-main explosions from `scripts/fatal.csv`,
+shown as red circles).

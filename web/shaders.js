@@ -138,7 +138,8 @@ const PAL=array<vec3f,10>(${palette},${rgb('4d5261')},${rgb('16181d')});
   // works + sites: 16 B instance = (x, y, day, flag) f32. flag 0 urgent /
   // 1 emergency: screen-space ring billboard, laid-year windowed, distance-
   // faded so far views aren't freckled. flag 2 nts site: filled diamond,
-  // timeless and visible at every distance. selected instance enlarged blue.
+  // timeless and visible at every distance. flag 3 fatal incident: red ring,
+  // ditto. selected instance enlarged blue.
   const works = common + `
 struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32,@location(3)@interpolate(flat)fd:f32};
 
@@ -146,7 +147,7 @@ struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(
   let site=df.y>1.5;
   let hide=(!site)&&((df.x>0.&&1970.+df.x/365.2425>v.ms.w)
     ||select(v.tw2.z>0.,1970.+df.x/365.2425<v.tw2.z,df.x>0.));
-  if(hide||((u32(v.tw2.y)>>select(select(11u,10u,df.y>.5),13u,site))&1u)==0u){return O(OFF,vec2f(0.),0.,0.,0.);}
+  if(hide||((u32(v.tw2.y)>>select(select(select(11u,10u,df.y>.5),13u,site),14u,df.y>2.5))&1u)==0u){return O(OFF,vec2f(0.),0.,0.,0.);}
   // distance-cull on a flat-ground position before paying for the terrain
   // sample — most of the 144k instances are far outside the fade radius
   let ground=v.vp*vec4f(pt,0.,1.);
@@ -159,10 +160,11 @@ struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(
   return O(vec4f(c.xy+q*r*c.w,c.zw),q,hot,df.y,fd);
 }
 @fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32,@location(3)@interpolate(flat)fd:f32)->@location(0)vec4f{
-  let site=em>1.5;
+  let site=em>1.5&&em<2.5;
   let a=select(smoothstep(.13,.07,abs(length(q)-.89)),smoothstep(1.,.85,abs(q.x)+abs(q.y)),site);
   if(a<.01){discard;}
   var col=select(select(vec3f(.55,.58,.64),vec3f(.07,.07,.07),em>.5),vec3f(.09,.09,.11),site);
+  if(em>2.5){col=vec3f(.88,.09,.06);}
   if(hot>.5){col=vec3f(0.,.55,.9);}
   return vec4f(col,a*fd*.95);
 }`
