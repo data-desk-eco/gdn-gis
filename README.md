@@ -3,8 +3,12 @@
 `gdn-gis` reverse-engineers the vector map data shipped inside the Cadent /
 National Gas **MAPS Viewer** Windows distribution and assembles it into a single
 geoparquet of the Cadent network (~2.31 million pipes, ~140,000 km
-of main), plus the artefacts for a WebGPU map of the whole network. All sources
-are fetched automatically — nothing is downloaded by hand.
+of main), plus the artefacts for a WebGPU map of the whole network. The map
+also carries SGN's open-data distribution network (Scotland + southern
+England, ~1.13 million mains from their ArcGIS hub) and the National
+Transmission System — pipe corridors and above-ground sites from National
+Gas's open shapefiles — in place of the viewer's own national HP layer. All
+sources are fetched automatically — nothing is downloaded by hand.
 
 ## Usage
 
@@ -14,10 +18,12 @@ Run everything from the repo root; paths in `config.toml` are relative to it.
 
 ```sh
 scripts/fetch-maps.sh data/maps-viewer.zip USER PASS   # MAPS Viewer bundle (DNV Veracity login)
+scripts/fetch-sgn.sh                                   # SGN open-data mains, per authority (~1 h, resumable)
+scripts/fetch-nts.sh                                   # NTS pipe corridors + sites (National Gas shapefiles)
 scripts/fetch-works.sh data/streetworks                # Street Manager permit archive (incidents)
 scripts/fetch-terrain.sh                               # OS Terrain 50 (national relief)
 scripts/fetch-lidar.py                                 # EA 1 m LiDAR DTM (resumable, ~1 h)
-scripts/fetch-buildings.sh                             # Geofabrik England OSM extract
+scripts/fetch-buildings.sh                             # Geofabrik UK OSM extract
 scripts/fetch-basemap.py                               # GB coastline (ONS) + place names (OS Open Names)
 scripts/build-years.sh                                 # laid-year sidecar (needs duckdb)
 ```
@@ -78,6 +84,8 @@ release normalised to the same vocabulary (`pressure_code`, `diameter_mm`,
 `material`, `host_*` / `inserted`; WKB MultiLineStrings in OGC:CRS84).
 
 Alongside it, the extractor writes the WebGPU map artefacts (`dist/map.*`,
-`terr*.bin`, `bldg.*`, `works.*`) served by `web/map.html`;
+`terr*.bin`, `bldg.*`, `works.*`, `sites.*`) served by `web/map.html` — the
+pipe layer merges the Cadent extract with the SGN and NTS tsvs from `[ext]`
+in `config.toml`, and SGN segments carry their real install years;
 `scripts/fetch-basemap.py` adds the basemap pair (`coast.u16`, `places.tsv`)
 directly to `dist/`.

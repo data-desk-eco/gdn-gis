@@ -1,12 +1,14 @@
 // buildings layer (gdn-gis --buildings): osm footprints from the geofabrik
-// england extract (data/england-latest.osm.pbf, fetch-buildings.sh), drawn by
-// the client as instanced wireframes. per footprint *edge*, the same 12 B
-// record shape as the pipes (see map.rs): u16 cell-local x0 y0 x1 y1 clipped at
-// cell bounds, u16 cell id, then h and min-height as u8 half-metres.
+// uk extract (data/uk-latest.osm.pbf, fetch-buildings.sh), drawn by the client
+// as instanced wireframes. per footprint *edge*, the same 12 B record shape as
+// the pipes (see map.rs): u16 cell-local x0 y0 x1 y1 clipped at cell bounds,
+// then the packed word — cell id 18 | height 8 | min-height 6 (half-metres;
+// min-height saturates at 31.5 m).
 //
 //   bldg.bin   edges sorted by cell — http-range-fetched at street zoom only.
 //   bldg.idx   u32 edge count per cell.
-//   roof.bin   earcut roof triangles, 16 B: u16 x0 y0 x1 y1 x2 y2 cell, u8 h+pad.
+//   roof.bin   earcut roof triangles, 16 B: u16 x0 y0 x1 y1 x2 y2, u32 word
+//              (cell id 18 | height 8).
 //   roof.idx   u32 triangle count per cell.
 //   bldg.tsv   named buildings, "x y name" (bng km), sorted by cell — the lazy
 //              click sidecar, fetched per pick.
@@ -25,9 +27,9 @@ use std::io::{BufWriter, Write};
 use osmpbf::{Element, ElementReader};
 use rayon::prelude::*;
 
-use crate::map::{write_idx, write_layer, Grid, MapCfg};
+use crate::map::{write_idx, write_layer, Grid, MapCfg, Rec};
 
-const PBF: &str = "data/england-latest.osm.pbf";
+const PBF: &str = "data/uk-latest.osm.pbf";
 
 /// wgs84 lon/lat → osgb36 british national grid metres: geodetic→cartesian,
 /// 7-param helmert (epsg:1314, ≤ ~3 m), cartesian→airy geodetic, transverse
@@ -177,7 +179,7 @@ fn clip_tri(g: &Grid, t: [(f64, f64); 3], mut emit: impl FnMut(u32, [u16; 6])) {
 
 pub fn write(m: &MapCfg) {
     let g = Grid::new(m);
-    let reader = || ElementReader::from_path(PBF).expect("data/england-latest.osm.pbf — run scripts/fetch-buildings.sh");
+    let reader = || ElementReader::from_path(PBF).expect("data/uk-latest.osm.pbf — run scripts/fetch-buildings.sh");
 
     // pass 1: building multipolygon relations → member way id → inherited tags,
     // plus each relation's member list (way id, inner?) for roof ring assembly
@@ -292,7 +294,7 @@ pub fn write(m: &MapCfg) {
     };
 
     // clip, bin — walls, earcut roofs, and the named-building click rows
-    let (mut recs, mut roofs, names): (Vec<(u32, [u16; 4], u8, u8)>, Vec<(u32, [u16; 6], u8)>, Vec<(u32, String)>) = ways
+    let (mut recs, mut roofs, names): (Vec<Rec>, Vec<(u32, [u16; 6], u8)>, Vec<(u32, String)>) = ways
         .par_iter()
         .fold(
             || (Vec::new(), Vec::new(), Vec::new()),
@@ -309,7 +311,7 @@ pub fn write(m: &MapCfg) {
                     return (recs, roofs, names);
                 }
                 for w2 in pts.windows(2) {
-                    g.clip(w2[0], w2[1], |c, q| recs.push((c, q, w.h, w.mh)));
+                    g.clip(w2[0], w2[1], |c, q| recs.push((c, q, c | (w.h as u32) << 18 | (w.mh.min(63) as u32) << 26)));
                 }
                 if w.roof && pts.len() > 3 && pts.first() == pts.last() {
                     let ring = &pts[..pts.len() - 1];
@@ -394,8 +396,7 @@ pub fn write(m: &MapCfg) {
         for v in q {
             w.write_all(&v.to_le_bytes()).unwrap();
         }
-        w.write_all(&(*c as u16).to_le_bytes()).unwrap();
-        w.write_all(&[*h, 0]).unwrap();
+        w.write_all(&(*c | (*h as u32) << 18).to_le_bytes()).unwrap();
     }
     w.flush().unwrap();
     write_idx(&path("roof.idx"), &counts);

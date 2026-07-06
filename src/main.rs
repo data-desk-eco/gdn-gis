@@ -34,6 +34,7 @@ use parquet::file::metadata::KeyValue;
 use parquet::file::properties::WriterProperties;
 
 mod bldg; // osm buildings layer (dist/bldg.bin / .idx / .tsv / .tofs)
+mod ext; // external open-data networks: sgn + nts pipes, nts sites (dist/sites.*)
 mod map; // gpu-map artefact generation (dist/map.bin / .idx / .base.bin / .json)
 mod pipes; // open gpi release -> clean geoparquet (dist/pipes.parquet)
 mod terrain; // relief tiers (dist/terr0.bin / terr1.bin / terr1.idx)
@@ -84,6 +85,8 @@ struct Config {
     works: Option<works::WorksCfg>,
     #[serde(default)]
     pipes: Option<pipes::PipesCfg>,
+    #[serde(default)]
+    ext: Option<ext::ExtCfg>,
 }
 
 #[derive(Deserialize)]
@@ -486,6 +489,9 @@ pub(crate) struct Row {
     facet: String,
     src: Option<String>,
     date: Option<String>,
+    // known install year (ext rows; 0 = explicitly unknown). none => estimate
+    // from the gpi sidecar. never a parquet column — the map artefacts only.
+    pub(crate) year: Option<u16>,
     pub(crate) geom: Geom,
 }
 
@@ -903,7 +909,7 @@ fn main() {
             } else {
                 Geom::Multi(merged)
             };
-            Some(Row { fid: Some(fid), layer, tip: acc.tip, square: acc.square, facet: acc.facet, src: acc.src, date: acc.date, geom })
+            Some(Row { fid: Some(fid), layer, tip: acc.tip, square: acc.square, facet: acc.facet, src: acc.src, date: acc.date, year: None, geom })
         })
         .collect();
     rows.extend(bucket.unnamed.into_iter().map(|(layer, u)| Row {
@@ -914,11 +920,16 @@ fn main() {
         facet: u.facet,
         src: u.src,
         date: u.date,
+        year: None,
         geom: u.geom,
     }));
 
     write_parquet(&rows, &cfg, &out, t0);
     if let Some(m) = &cfg.map {
+        if let Some(x) = &cfg.ext {
+            rows.extend(ext::rows(x)); // after the parquet: cadent's stays cadent-only
+            ext::sites(x, &m.dir);
+        }
         map::write(&rows, &cfg, m);
         if let Some(w) = &cfg.works {
             works::write(w, m, &cfg.crs);

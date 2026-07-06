@@ -31,9 +31,16 @@ id_null = ["UNKNOWN"]         # id values that mean "no feature id"
 strip_layer_prefix = true     # strip the leading non-alpha draw-order sigil ($ ! #)
 
 # keep only features whose (cleaned) layer contains one of these — the gas
-# assets. the os background geography and annotation layers are dropped.
+# assets. the os background geography and annotation layers are dropped, and so
+# is the national high pressure layer: the nts is drawn from national gas's own
+# open release instead (scripts/fetch-nts.sh + [ext]).
 [keep]
-layer_contains = ["Mains & Plant"]
+layer_contains = [
+  "Low Pressure Mains & Plant",
+  "Medium Pressure Mains & Plant",
+  "Intermediate Pressure Mains & Plant",
+  "Local High Pressure Mains & Plant",
+]
 
 # cleaned layer name -> pressure tier; emitted as two columns.
 [tier]
@@ -44,7 +51,6 @@ map = [
   { match = "Medium Pressure Mains & Plant",       code = "mp",  label = "medium pressure" },
   { match = "Intermediate Pressure Mains & Plant", code = "ip",  label = "intermediate pressure" },
   { match = "Local High Pressure Mains & Plant",   code = "lhp", label = "local high pressure" },
-  { match = "National High Pressure Mains & Plant",code = "nhp", label = "national high pressure" },
 ]
 
 # parse the screentip (e.g. `180MM PE (IN 8" CI)`) into diameter_mm + material,
@@ -62,15 +68,24 @@ column = "network_area"
 skip_section = "Areas"
 
 # gpu-map artefacts (see src/map.rs). coords are british national grid in km; the
-# grid covers the whole cadent licence area (e 304–656, n 158–514 km). present =>
-# the extractor also writes dist/map.{f32,idx,base.f32,json} for map.html to serve.
+# grid covers every licence area on the map — cadent plus sgn's scotland and
+# southern networks (stornoway to thanet). present => the extractor also writes
+# dist/map.{bin,idx,base.bin,json} for map.html to serve.
 [map]
 dir = "dist"
 cell_km = 2.0
-origin = [300.0, 156.0]            # min easting, min northing (km)
-ncols = 180                        # 180 * 2 km = 360 km east  (to e 660)
-nrows = 180                        # 180 * 2 km = 360 km north (to n 516)
+origin = [100.0, 30.0]             # min easting, min northing (km)
+ncols = 290                        # 290 * 2 km = 580 km east  (to e 680)
+nrows = 480                        # 480 * 2 km = 960 km north (to n 990)
 view = [616.389, 244.655, 0.27]    # default view: ipswich centre + zoom (km, ndc/km)
+
+# external networks merged into the map artefacts beside the cadent extract:
+# tsvs from scripts/fetch-sgn.sh + fetch-nts.sh (wkt \t pressure \t material
+# code \t inst_date; polygon rings read as closed lines). sites (nts site
+# boundaries \t facility \t location) -> dist/sites.{f32,tsv} click markers.
+[ext]
+pipes = ["data/sgn.tsv", "data/nts.tsv"]
+sites = "data/nts-sites.tsv"
 
 # streetworks incident artefacts (see src/works.rs). scripts/fetch-works.sh streams
 # the dft street manager permit archive into `dir`, keeping every gas transporter;
@@ -78,7 +93,7 @@ view = [616.389, 244.655, 0.27]    # default view: ipswich centre + zoom (km, nd
 # emergency repairs — as clickable map circles.
 [works]
 dir = "data/streetworks"
-promoter = "(?i)cadent"
+promoter = '(?i)cadent|scotland gas|southern gas|\bsgn\b'
 
 # open gpi (gas pipe infrastructure) release (see src/pipes.rs): normalised into a
 # clean geoparquet for local duckdb analysis. gdn-gis --pipes rebuilds just this.

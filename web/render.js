@@ -17,7 +17,7 @@ const DETAIL_SLOTS = 256  // layers of the lidar detail texture array
 
 export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
   const { ncols: NC, nrows: NR } = M, N = NC * NR
-  const { n: T0N, step: T0S } = M.t0, T1P = M.t1.p
+  const { nx: T0X, ny: T0Y, step: T0S } = M.t0, T1P = M.t1.p
   const TH = M.detail_scale, BTH = M.bldg_scale, [Y0, Y1] = M.yr
   const BU = GPUBufferUsage, TU = GPUTextureUsage, Q = dev.queue
 
@@ -25,7 +25,7 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
   const [uni, uni2] = [0, 0].map(() => dev.createBuffer({ size: 128, usage: BU.UNIFORM | BU.COPY_DST }))
   const lutB = dev.createBuffer({ size: N * 4, usage: BU.STORAGE | BU.COPY_DST })
   const tex = size => dev.createTexture({ size, format: 'r16uint', usage: TU.TEXTURE_BINDING | TU.COPY_DST })
-  const coarseT = tex([T0N, T0N]), fineT = tex([T1P, T1P, DETAIL_SLOTS])
+  const coarseT = tex([T0X, T0Y]), fineT = tex([T1P, T1P, DETAIL_SLOTS])
 
   const bgl = dev.createBindGroupLayout({
     entries: [{ buffer: {} }, { texture: { sampleType: 'uint' } }, { texture: { sampleType: 'uint', viewDimension: '2d-array' } }, { buffer: { type: 'read-only-storage' } }]
@@ -42,8 +42,8 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
   for (const k in src) mod[k] = dev.createShaderModule({ code: src[k] })
   const blend = { color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha' }, alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha' } }
   const layout = dev.createPipelineLayout({ bindGroupLayouts: [bgl] })
-  const attrs = (arrayStride, a, b) => [{ arrayStride, stepMode: 'instance', attributes: [{ shaderLocation: 0, offset: 0, format: a }, ...(b ? [{ shaderLocation: 1, offset: 8, format: b }] : [])] }]
-  const V12 = attrs(12, 'uint16x4', 'uint16x2')
+  const attrs = (arrayStride, ...formats) => [{ arrayStride, stepMode: 'instance', attributes: formats.map((format, i) => ({ shaderLocation: i, offset: [0, 8, 12][i], format })) }]
+  const V12 = attrs(12, 'uint16x4', 'uint32')
   const mk = (m, constants, buffers, topology = 'line-list', ds, entry = '') => dev.createRenderPipeline({
     layout,
     primitive: { topology },
@@ -57,7 +57,7 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
     pipesHL: mk(mod.pipes, { PASS: 1 }, V12, 'triangle-strip'),
     bldgEdge: mk(mod.buildings, undefined, V12),
     bldgWall: mk(mod.buildings, undefined, V12, 'triangle-strip', solid, 'f'),
-    roof: mk(mod.buildings, undefined, attrs(16, 'uint16x4', 'uint16x4'), 'triangle-list', solid, 'r'),
+    roof: mk(mod.buildings, undefined, attrs(16, 'uint16x4', 'uint16x2', 'uint32'), 'triangle-list', solid, 'r'),
     works: mk(mod.works, undefined, attrs(16, 'float32x2', 'float32x2'), 'triangle-strip'),
     terrainWire: mk(mod.terrain),
     coastLine: mk(mod.coast, undefined, attrs(8, 'uint16x4')),
@@ -90,15 +90,16 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
     lut[id] = -1
     Q.writeBuffer(lutB, id * 4, lut, id, 1)
   }
-  const uploadCoarse = ab => Q.writeTexture({ texture: coarseT }, ab, { bytesPerRow: T0N * 2 }, [T0N, T0N])
+  const uploadCoarse = ab => Q.writeTexture({ texture: coarseT }, ab, { bytesPerRow: T0X * 2 }, [T0X, T0Y])
 
   let depthT
   const uniData = new Float32Array(32)  // reused every frame; writeBuffer copies synchronously
-  const writeUni = (buf, vp, cam, grid) => {
+  const writeUni = (buf, vp, cam, grid, fade) => {
     uniData.set(vp)
     uniData.set([state.RPX * 2 / canvas.width, state.RPX * 2 / canvas.height, state.sel, state.yr > Y1 ? 9e3 : state.yr], 16)
     uniData.set(grid, 20)
     uniData.set([state.mask, state.lo > Y0 ? state.lo : 0, cam.pitch, cam.dist], 25)
+    uniData.set(fade, 29)  // (fe, fi, ma) — wire grid fade band + minor-line alpha
     Q.writeBuffer(buf, 0, uniData)
   }
 
@@ -108,21 +109,27 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
   function draw() {
     const { cam, layers } = state, s = cam.scale(), vp = cam.viewProj(), bb = cam.cellRect()[4]
 
-    // near terrain wire grid: ~14 px spacing, capped at 500 lines each way
+    // near terrain wire grid: ~14 px spacing, capped at 500 lines each way.
+    // the step snaps to a pow2 of the base spacing so lines keep fixed world
+    // positions while orbiting; the fractional remainder crossfades the minor
+    // (odd) lines in via ma
     const gx = clampT0(bb[0]), gX = clampT0(bb[1]), gy = clampT0(bb[2], 1), gY = clampT0(bb[3], 1)
-    const st = Math.max(.05, 14 / (T0S * s * canvas.height / 2), (gX - gx) / 499, (gY - gy) / 499)
+    const rw = Math.max(.05, 14 / (T0S * s * canvas.height / 2), (gX - gx) / 499, (gY - gy) / 499)
+    const st = .05 * 2 ** Math.floor(Math.log2(rw / .05))
     const i0 = Math.floor(gx / st) * st, j0 = Math.floor(gy / st) * st
     const nw = Math.ceil((gX - i0) / st) + 1, nh = Math.ceil((gY - j0) / st) + 1
 
-    // far grid out to the horizon, coarser, only drawn when it adds reach
+    // far grid out to the horizon, coarser; the near grid dissolves into it
+    // over the 4.2–6·dist band so the tier boundary is invisible at tilt
     const wb = cam.cellRect(40 + 900 / cam.dist)[4]
     const wx = clampT0(wb[0]), wX = clampT0(wb[1]), wy = clampT0(wb[2], 1), wY = clampT0(wb[3], 1)
-    const sf = st * Math.ceil(Math.max(1, (wX - wx) / (349 * st), (wY - wy) / (349 * st)))
+    const sm = Math.max(1, (wX - wx) / (349 * st), (wY - wy) / (349 * st))
+    const sf = st * 2 ** Math.floor(Math.log2(sm))
     const iF = Math.floor(wx / sf) * sf, jF = Math.floor(wy / sf) * sf
     const nwF = Math.ceil((wX - iF) / sf) + 1, nhF = Math.ceil((wY - jF) / sf) + 1
 
-    writeUni(uni, vp, cam, [i0, j0, st, nw, nh])
-    writeUni(uni2, vp, cam, [iF, jF, sf, nwF, nhF])
+    writeUni(uni, vp, cam, [i0, j0, st, nw, nh], [6, -9, clamp01(2 - rw / st)])
+    writeUni(uni2, vp, cam, [iF, jF, sf, nwF, nhF], [40 + 900 / cam.dist, 4.2, clamp01(2 - sm * st / sf)])
 
     if (depthT?.width != canvas.width || depthT?.height != canvas.height) {
       depthT?.destroy()
@@ -151,7 +158,7 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
     if (cam.pitch > .02 || s >= TH) {
       p.setPipeline(pipe.terrainWire)
       p.draw(2 * Math.max(nw, nh), nw + nh)
-      if (sf > st) { p.setBindGroup(0, bg2); p.draw(2 * Math.max(nwF, nhF), nwF + nhF); p.setBindGroup(0, bg) }
+      p.setBindGroup(0, bg2); p.draw(2 * Math.max(nwF, nhF), nwF + nhF); p.setBindGroup(0, bg)
     }
 
     for (const pl of [pipe.pipes, pipe.pipesHL]) {
@@ -161,13 +168,19 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
         for (const o of layers.pipe.cells.values()) if (o.vis && o.vb) { p.setVertexBuffer(0, o.vb); p.draw(4, o.n) }
     }
 
-    if (state.wkN && s >= TH) { p.setPipeline(pipe.works); p.setVertexBuffer(0, state.wkVB); p.draw(4, state.wkN) }
+    // works only at street zoom; the nts sites appended after them always
+    if (state.wkN) {
+      p.setPipeline(pipe.works); p.setVertexBuffer(0, state.wkVB)
+      if (s >= TH && state.wkN0) p.draw(4, state.wkN0)
+      if (state.wkN > state.wkN0) p.draw(4, state.wkN - state.wkN0, 0, state.wkN0)
+    }
 
     p.end()
     Q.submit([enc.finish()])
     return { vp, bb, s }
   }
-  const clampT0 = (v, y) => Math.min(Math.max((v - (y ? M.miny : M.minx)) / T0S, 0), T0N - 1)
+  const clampT0 = (v, y) => Math.min(Math.max((v - (y ? M.miny : M.minx)) / T0S, 0), (y ? T0Y : T0X) - 1)
+  const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v
 
   return { draw, makeBuffer, allocSlot, freeSlot, uploadCoarse }
 }

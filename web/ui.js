@@ -10,10 +10,13 @@ export function makeUI({ M, state, cam, heightAt, repaint }) {
   const [Y0, Y1] = M.yr
   const leg = $('leg'), yrs = $('yrs'), los = $('los'), play = $('play'), ylab = $('ylab'), tp = $('tp')
 
-  // legend: one key per material (mask bit = palette slot, 8 unknown, 9 mpdi)
-  // plus the two works severities (10, 11); click toggles the bit
+  // legend: one key per material (mask bit = palette slot, 8 unknown, 9 mpdi),
+  // the nts transmission layer (12 lines, 13 sites) and the two works
+  // severities (10, 11); click toggles the bit
   leg.innerHTML = MATERIALS.map(([hex, label, bit], i) =>
     `<div class=key data-b=${bit ?? (i > 3 ? 8 : 9)}><i style=background:#${hex}></i>${label}</div>`).join('')
+    + '<div class=key data-b=12><i style=background:#16181d></i>nts pipeline</div>'
+    + '<div class=key data-b=13><i class=dot style="background:#16181d;border-color:#16181d;border-radius:0;transform:rotate(45deg) scale(.8)"></i>nts site</div>'
     + '<div class=key data-b=10><i class=dot></i>emergency</div><div class=key data-b=11><i class=dot style=border-color:#8b8f99></i>urgent</div>'
   leg.onclick = e => {
     const k = e.target.closest('.key')

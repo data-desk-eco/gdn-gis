@@ -18,28 +18,28 @@ const D = /^(localhost|127\.|\[?::1)/.test(location.hostname) ? '../dist/' : 'ht
 const { dev, ctx, fmt } = await initGPU(cv, die)
 const M = await (await fetch(D + 'map.json')).json()
 const { minx: MX, miny: MY, cell: CELL, ncols: NC, nrows: NR } = M, N = NC * NR
-const { n: T0N, step: T0S } = M.t0, T1P = M.t1.p, T1B = T1P * T1P * 2
+const { nx: T0X, ny: T0Y, step: T0S } = M.t0, T1P = M.t1.p, T1B = T1P * T1P * 2
 const TH = M.detail_scale, BTH = M.bldg_scale, [Y0, Y1] = M.yr
 
 const dpr = Math.min(devicePixelRatio || 1, 2)
 const state = {
   dpr, RPX: 4.5 * dpr,           // works-ring radius in device px
-  mask: 4095,                    // legend visibility bits
+  mask: 16383,                   // legend visibility bits
   sel: -1,                       // picked works instance
   yr: Y0, lo: Y0, playing: true, // laid-year window
-  baseN: 0, coastN: 0, wkN: 0,
+  baseN: 0, coastN: 0, wkN: 0, wkN0: 0,
 }
 
 // cpu twin of the shader's terrain sampler, for label/pick/eye heights
 let t0cpu
 const heightAt = (x, y) => {
   const cell = state.layers?.terr?.cells.get(clamp((x - MX) / CELL | 0, 0, NC - 1) + NC * clamp((y - MY) / CELL | 0, 0, NR - 1))
-  const [g, W, gx, gy] = cell?.cpu
-    ? [cell.cpu, T1P, ((x - MX) / CELL % 1) * (T1P - 1), ((y - MY) / CELL % 1) * (T1P - 1)]
-    : [t0cpu, T0N, (x - MX) / T0S, (y - MY) / T0S]
+  const [g, W, H, gx, gy] = cell?.cpu
+    ? [cell.cpu, T1P, T1P, ((x - MX) / CELL % 1) * (T1P - 1), ((y - MY) / CELL % 1) * (T1P - 1)]
+    : [t0cpu, T0X, T0Y, (x - MX) / T0S, (y - MY) / T0S]
   if (!g) return 0
-  const x0 = clamp(gx, 0, W - 1.001), y0 = clamp(gy, 0, W - 1.001), dx = x0 % 1, dy = y0 % 1
-  const v = (i, j) => g[Math.min((y0 | 0) + j, W - 1) * W + Math.min((x0 | 0) + i, W - 1)]
+  const x0 = clamp(gx, 0, W - 1.001), y0 = clamp(gy, 0, H - 1.001), dx = x0 % 1, dy = y0 % 1
+  const v = (i, j) => g[Math.min((y0 | 0) + j, H - 1) * W + Math.min((x0 | 0) + i, W - 1)]
   return ((v(0, 0) * (1 - dx) + v(1, 0) * dx) * (1 - dy) + (v(0, 1) * (1 - dx) + v(1, 1) * dx) * dy - 1000) * EXAGGERATE * 1e-4
 }
 
@@ -130,27 +130,35 @@ cv.onpointermove = e => {
 }
 cv.onwheel = e => { e.preventDefault(); cam.dolly(Math.exp(e.deltaY * .003), e.offsetX * dpr, e.offsetY * dpr); repaint(); sched() }
 
-// --- picking: nearest works ring by screen distance, else a named building
-// in the clicked cell. detail text rides in lazily fetched tsv sidecars ---
-let wk, detP, tofs
+// --- picking: nearest works ring / nts site by screen distance, else a named
+// building in the clicked cell. detail text rides in lazily fetched tsv
+// sidecars. sites (flag 2, appended after the works records) are timeless and
+// pickable at any zoom; works only at street zoom ---
+let wk, wkN0 = 0, detP, siteP, tofs
 const details = () => detP ??= fetch(D + 'works.tsv').then(r => r.text()).then(t => t.split('\n'))
+const siteDetails = () => siteP ??= fetch(D + 'sites.tsv').then(r => r.text()).then(t => t.split('\n'))
 const bldgNames = new Map()
 async function pick(x, y) {
-  if (cam.scale() < TH) return
   const vp = cam.viewProj(), [bx0, bx1, by0, by1] = cam.cellRect()[4].map((v, i) => v + (i % 2 ? .1 : -.1))
   let best = 9 * dpr
   state.sel = -1
   if (wk) for (let i = 0; i < state.wkN; i++) {
-    const wx = wk[i * 4], wy = wk[i * 4 + 1], when = wk[i * 4 + 2] && 1970 + wk[i * 4 + 2] / 365.2425
-    if (wx < bx0 || wx > bx1 || wy < by0 || wy > by1
-      || !(state.mask >> (wk[i * 4 + 3] > .5 ? 10 : 11) & 1)
+    const wx = wk[i * 4], wy = wk[i * 4 + 1], when = wk[i * 4 + 2] && 1970 + wk[i * 4 + 2] / 365.2425, flag = wk[i * 4 + 3]
+    if (wx < bx0 || wx > bx1 || wy < by0 || wy > by1) continue
+    if (flag > 1.5) { if (!(state.mask >> 13 & 1)) continue }
+    else if (cam.scale() < TH
+      || !(state.mask >> (flag > .5 ? 10 : 11) & 1)
       || (when ? when > state.yr && state.yr <= Y1 || when < state.lo : state.lo > Y0)) continue
     const p = cam.project(vp, wx, wy, heightAt(wx, wy) + .004)
-    if (!p || p[2] > 3.2 * cam.dist) continue
+    if (!p || (flag < 1.5 && p[2] > 3.2 * cam.dist)) continue
     const d = Math.hypot(p[0] - x, p[1] - y)
     if (d < best) { best = d; state.sel = i }
   }
   if (state.sel >= 0) {
+    if (wk[state.sel * 4 + 3] > 1.5) {
+      const [loc, fac] = (await siteDetails())[state.sel - wkN0].split('\t')
+      return ui.tip([loc || '(unnamed site)', `national transmission · ${(fac || 'site').toLowerCase()}`])
+    }
     const det = await details()
     const [permit, cat, status, street, town, auth, start, end, tm, loc] = det[state.sel].split('\t')
     return ui.tip([
@@ -188,7 +196,7 @@ async function pick(x, y) {
 // arrives, so the map is alive in one round trip instead of ten megabytes ---
 const get = f => fetch(D + f).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null)
 resize()
-const F = Object.fromEntries(['map.idx', 'map.base.bin', 'terr0.bin', 'terr1.idx', 'bldg.idx', 'bldg.tofs', 'roof.idx', 'works.f32', 'coast.u16', 'places.tsv'].map(f => [f, get(f)]))
+const F = Object.fromEntries(['map.idx', 'map.base.bin', 'terr0.bin', 'terr1.idx', 'bldg.idx', 'bldg.tofs', 'roof.idx', 'works.f32', 'sites.f32', 'coast.u16', 'places.tsv'].map(f => [f, get(f)]))
 const when = (keys, use) => Promise.all(keys.map(k => F[k])).then(abs => { if (abs.every(Boolean)) { use(...abs); sched() } })
 
 const [pipeIdx, baseAB] = await Promise.all([F['map.idx'], F['map.base.bin']])
@@ -217,7 +225,17 @@ when(['bldg.idx', 'bldg.tofs'], (idx, tf) => {
   paging.add('bldg', { blob: 'bldg.bin', counts: new Uint32Array(idx), bytes: 12, cap: 250, gate: BTH, load: vbload(12) })
 })
 when(['roof.idx'], idx => paging.add('roof', { blob: 'roof.bin', counts: new Uint32Array(idx), bytes: 16, cap: 250, gate: BTH, load: vbload(16) }))
-when(['works.f32'], ab => { wk = new Float32Array(ab); state.wkVB = renderer.makeBuffer(ab); state.wkN = wk.length / 4 })
+// works + nts sites share the one instance buffer: works first, sites (flag 2) after
+Promise.all([F['works.f32'], F['sites.f32']]).then(([w, s]) => {
+  if (!w && !s) return
+  wkN0 = state.wkN0 = (w?.byteLength ?? 0) / 16
+  wk = new Float32Array(((w?.byteLength ?? 0) + (s?.byteLength ?? 0)) / 4)
+  if (w) wk.set(new Float32Array(w))
+  if (s) wk.set(new Float32Array(s), wkN0 * 4)
+  state.wkVB = renderer.makeBuffer(wk)
+  state.wkN = wk.length / 4
+  sched()
+})
 when(['coast.u16'], ab => { state.coastVB = renderer.makeBuffer(ab); state.coastN = ab.byteLength / 8 })
 when(['places.tsv'], ab => ui.setPlaces(new TextDecoder().decode(ab).trim().split('\n').map(l => { const [n, x, y, r] = l.split('\t'); return [+x, +y, 18e3 / +r, n] })))
 

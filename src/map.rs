@@ -1,16 +1,17 @@
-// gpu-map data generation, format v2. turns the dissolved network into the
+// gpu-map data generation, format v3. turns the dissolved network into the
 // demand-paged artefacts map.html reads — straight from the same in-memory
 // features, osgb36 british national grid. every record is 12 bytes:
 //
 //   u16 x0 y0 x1 y1   endpoint coords local to the record's 2 km cell
 //                     (segments are clipped at cell boundaries, so 0..65535
 //                     spans exactly one cell — ~3 cm posts, seam-exact)
-//   u16 cell          grid cell id (col + ncols*row) — the shader rebuilds
-//                     world coords from this, no per-draw uniforms
-//   u8  tone|0x80     material index (MATS order; 0xff unknown), high bit =
-//                     live medium-pressure ductile iron, the killer class
-//   u8  year          laid year - 1848 (0 = unknown → always visible), an
-//                     estimate joined from cadent's open gpi data (build-years.sh)
+//   u32 word          bit-packed, layer-specific. pipes: cell id 18 (col +
+//                     ncols*row — the shader rebuilds world coords from this,
+//                     no per-draw uniforms) | tone 4 (MATS order; 8 unknown,
+//                     9 nts) | mpdi 1 (live medium-pressure ductile iron, the
+//                     killer class) | year 8 (laid year - 1848, 0 = unknown →
+//                     always visible; real for ext rows, else an estimate
+//                     joined from cadent's open gpi data via build-years.sh)
 //
 //   map.bin       every segment, sorted by cell id: each cell is one contiguous
 //                 byte-range the client http-range-fetches on demand.
@@ -55,6 +56,7 @@ fn d_blen() -> f64 {
 
 /// live-carrier materials, ordered by mrps-style risk (worst first); the tone a
 /// segment carries is its index here, and map.html's palette follows the same order.
+/// tones 8/9 (unknown / nts transmission) sit past the material list.
 const MATS: [&str; 8] =
     ["cast iron", "spun iron", "asbestos cement", "lead", "ductile iron", "steel", "pvc", "polyethylene"];
 /// the same materials as gpi two-letter codes, for the laid-year join.
@@ -118,7 +120,7 @@ pub(crate) struct Grid {
 }
 impl Grid {
     pub fn new(m: &MapCfg) -> Grid {
-        assert!(m.ncols * m.nrows <= 65536, "cell ids are u16 in the 12 B record");
+        assert!(m.ncols * m.nrows <= 1 << 18, "cell ids are 18 bits in the packed record word");
         Grid { minx: m.origin[0], miny: m.origin[1], cell: m.cell_km, nc: m.ncols, nr: m.nrows }
     }
     /// clip segment a-b (km) at cell boundaries and quantise each piece to u16
@@ -158,12 +160,13 @@ impl Grid {
 
 /// the laid-year sidecar (data/years.tsv from build-years.sh): median install
 /// year per (100 m cell, material) from cadent's open gpi data, '*' = any.
-struct Years(HashMap<u32, u8>, f64, f64);
+struct Years(HashMap<u32, u8>, f64, f64, u32, u32);
 impl Years {
-    const N: u32 = 3600; // 100 m cells across the 360 km grid
-    fn load(minx: f64, miny: f64) -> Years {
+    fn load(g: &Grid) -> Years {
         let mut m = HashMap::new();
-        // nb: build-years.sh bins against the same [map] origin — keep the two in step
+        // 100 m cells over the map grid; build-years.sh bins against the same
+        // [map] origin + width — keep the two in step
+        let (nx, ny) = ((g.nc as f64 * g.cell * 10.0) as u32, (g.nr as f64 * g.cell * 10.0) as u32);
         for ln in std::fs::read_to_string("data/years.tsv").unwrap_or_default().lines() {
             let mut f = ln.split('\t');
             let (Some(c), Some(mat), Some(y)) = (f.next(), f.next(), f.next()) else { continue };
@@ -171,7 +174,7 @@ impl Years {
             let mi = if mat == "*" { 15 } else { match CODES.iter().position(|&x| x == mat) { Some(i) => i as u32, None => continue } };
             m.insert(c * 16 + mi, (y - YR0).clamp(1, 255) as u8);
         }
-        Years(m, minx, miny)
+        Years(m, g.minx, g.miny, nx, ny)
     }
     /// year byte for a segment: midpoint 100 m cell + material, ring-searching
     /// two cells out, then the any-material fallback; 0 = unknown.
@@ -188,10 +191,10 @@ impl Years {
                             continue;
                         }
                         let (nx, ny) = (cx + dx, cy + dy);
-                        if nx < 0 || ny < 0 || nx >= Self::N as i64 || ny >= Self::N as i64 {
+                        if nx < 0 || ny < 0 || nx >= self.3 as i64 || ny >= self.4 as i64 {
                             continue;
                         }
-                        if let Some(&v) = self.0.get(&((nx as u32 + Self::N * ny as u32) * 16 + mi)) {
+                        if let Some(&v) = self.0.get(&((nx as u32 + self.3 * ny as u32) * 16 + mi)) {
                             return v;
                         }
                     }
@@ -202,14 +205,17 @@ impl Years {
     }
 }
 
-pub(crate) fn write_records(path: &str, recs: &[(u32, [u16; 4], u8, u8)]) {
+/// a 12 B record: quantised coords + the packed word (cell id in the low 18
+/// bits, layer-specific fields above — see the header comment / bldg.rs).
+pub(crate) type Rec = (u32, [u16; 4], u32);
+
+pub(crate) fn write_records(path: &str, recs: &[Rec]) {
     let mut w = BufWriter::new(File::create(path).unwrap());
-    for (cell, q, b0, b1) in recs {
+    for (_, q, word) in recs {
         for v in q {
             w.write_all(&v.to_le_bytes()).unwrap();
         }
-        w.write_all(&(*cell as u16).to_le_bytes()).unwrap();
-        w.write_all(&[*b0, *b1]).unwrap();
+        w.write_all(&word.to_le_bytes()).unwrap();
     }
     w.flush().unwrap();
 }
@@ -224,7 +230,7 @@ pub(crate) fn write_idx(path: &str, counts: &[u32]) {
 
 /// sort a record set by cell, write blob + per-cell count idx — the shape every
 /// variable-record layer (pipes, buildings) ships in.
-pub(crate) fn write_layer(dir: &str, stem: &str, recs: &mut Vec<(u32, [u16; 4], u8, u8)>, ncell: usize) {
+pub(crate) fn write_layer(dir: &str, stem: &str, recs: &mut Vec<Rec>, ncell: usize) {
     use rayon::prelude::*;
     recs.par_sort_unstable_by_key(|e| e.0);
     let mut counts = vec![0u32; ncell];
@@ -247,17 +253,19 @@ pub fn write(rows: &[Row], cfg: &Config, m: &MapCfg) {
         .map(|t| t.map.iter().map(|r| (r.m.as_str(), r.code.as_str())).collect())
         .unwrap_or_default();
     let g = Grid::new(m);
-    let years = Years::load(g.minx, g.miny);
+    let years = Years::load(&g);
 
-    let mut detail: Vec<(u32, [u16; 4], u8, u8)> = Vec::new();
-    let mut base: Vec<(u32, [u16; 4], u8, u8)> = Vec::new();
+    let mut detail: Vec<Rec> = Vec::new();
+    let mut base: Vec<Rec> = Vec::new();
     let (mut ymin, mut ymax) = (255u8, 0u8);
 
     for r in rows {
         let mat = re.as_ref().and_then(|re| parse_tip(r.tip.as_deref(), re, mats).1);
-        let tn = tone(mat);
+        let tn = if r.layer == "NTS" { 9 } else { tone(mat) };
         let mp_di = mat == Some("ductile iron") && tcode.get(r.layer.as_str()).copied() == Some("mp");
-        let tf = tn | if mp_di { 0x80 } else { 0 };
+        let pk = move |c: u32, yr: u8| c | (tn as u32) << 18 | (mp_di as u32) << 22 | (yr as u32) << 23;
+        // a known install year (ext rows) beats the gpi-sidecar estimate
+        let ry = r.year.map(|y| (y as i32 - YR0).clamp(0, 255) as u8);
         let lines: Vec<&[(f64, f64)]> = match &r.geom {
             Geom::Line(p) => vec![p.as_slice()],
             Geom::Multi(ps) => ps.iter().map(|p| p.as_slice()).collect(),
@@ -275,19 +283,19 @@ pub fn write(rows: &[Row], cfg: &Config, m: &MapCfg) {
             // detail: full network, lightly simplified, clipped + binned by cell
             for w in simplify(line, m.simplify_detail_m).windows(2) {
                 let (a, b) = (km(w[0]), km(w[1]));
-                let yr = years.stamp((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5, tn);
+                let yr = ry.unwrap_or_else(|| years.stamp((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5, tn));
                 if yr > 0 {
                     ymin = ymin.min(yr);
                     ymax = ymax.max(yr);
                 }
-                g.clip(a, b, |c, q| detail.push((c, q, tf, yr)));
+                g.clip(a, b, |c, q| detail.push((c, q, pk(c, yr))));
             }
             // base: only longer mains, heavily simplified, always resident
             if len_m > m.base_min_len_m {
                 for w in simplify(line, m.simplify_base_m).windows(2) {
                     let (a, b) = (km(w[0]), km(w[1]));
-                    let yr = years.stamp((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5, tn);
-                    g.clip(a, b, |c, q| base.push((c, q, tf, yr)));
+                    let yr = ry.unwrap_or_else(|| years.stamp((a.0 + b.0) * 0.5, (a.1 + b.1) * 0.5, tn));
+                    g.clip(a, b, |c, q| base.push((c, q, pk(c, yr))));
                 }
             }
         }
@@ -305,16 +313,17 @@ pub fn write(rows: &[Row], cfg: &Config, m: &MapCfg) {
     // drops below ~12 km; buildings at street level; floor shows the whole network.
     let span = (g.nc.max(g.nr) as f64) * g.cell;
     let (detail_scale, bldg_scale, smin, smax) = (1.0 / 12.0, 0.5, 0.5 / span, 80.0);
+    let (t0x, t0y) = crate::terrain::t0_dims(m);
     let json = format!(
         concat!(
             r#"{{"minx":{},"miny":{},"cell":{},"ncols":{},"nrows":{},"#,
             r#""view":{{"cx":{},"cy":{},"s":{}}},"detail_scale":{},"bldg_scale":{},"smin":{},"smax":{},"#,
-            r#""yr0":{},"yr":[{},{}],"t0":{{"n":{},"step":{}}},"t1":{{"p":{}}}}}"#
+            r#""yr0":{},"yr":[{},{}],"t0":{{"nx":{},"ny":{},"step":{}}},"t1":{{"p":{}}}}}"#
         ),
         g.minx, g.miny, g.cell, g.nc, g.nr, m.view[0], m.view[1], m.view[2],
         detail_scale, bldg_scale, smin, smax,
         YR0, YR0 + ymin as i32, YR0 + ymax as i32,
-        crate::terrain::N0, crate::terrain::STEP, crate::terrain::P
+        t0x, t0y, crate::terrain::STEP, crate::terrain::P
     );
     File::create(format!("{}/map.json", m.dir)).unwrap().write_all(json.as_bytes()).unwrap();
 

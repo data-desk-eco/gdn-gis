@@ -3,8 +3,10 @@
 
 fetches every populated 2 km cell of the map grid (dist/map.idx) at 8 m posts —
 251×251 u16 decimetres+1000, le, rows south→north, 65535 = nodata — into
-data/terr1/<cellid>. checkpointed: existing files are skipped, so it resumes;
-a zero-byte file marks a cell the wcs has no coverage for. gdal cli required.
+data/terr1/<E>_<N> (cell sw corner in km, so the archive survives grid
+changes). checkpointed: existing files are skipped, so it resumes; a zero-byte
+file marks a cell the wcs has no coverage for (all of scotland — the ea
+composite is england-only). gdal cli required.
 
     scripts/fetch-lidar.py [WORKERS=6]
 """
@@ -25,11 +27,11 @@ P = _m["t1"]["p"]  # posts per cell edge (8 m, both edges shared with neighbours
 
 
 def fetch(cid):
-    p = OUT / str(cid)
-    if p.exists():
-        return 0
     e = MINX + (cid % NC) * CELL
     n = MINY + (cid // NC) * CELL
+    p = OUT / f"{e // 1000}_{n // 1000}"
+    if p.exists():
+        return 0
     url = f"{WCS}&subset=E({e-4},{e+CELL+4})&subset=N({n-4},{n+CELL+4})"
     for attempt in range(3):
         try:
@@ -59,7 +61,8 @@ def fetch(cid):
 if __name__ == "__main__":
     OUT.mkdir(exist_ok=True)
     cnt = array.array("I", (ROOT / "dist/map.idx").read_bytes())
-    todo = [i for i, c in enumerate(cnt) if c and not (OUT / str(i)).exists()]
+    name = lambda i: f"{(MINX + i % NC * CELL) // 1000}_{(MINY + i // NC * CELL) // 1000}"
+    todo = [i for i, c in enumerate(cnt) if c and not (OUT / name(i)).exists()]
     print(f"lidar: {len(todo)} cells to fetch")
     t0, done = time.time(), 0
     with ThreadPoolExecutor(int(sys.argv[1]) if len(sys.argv) > 1 else 6) as ex:
