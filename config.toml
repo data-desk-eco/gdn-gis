@@ -79,3 +79,9 @@ view = [616.389, 244.655, 0.27]    # default view: ipswich centre + zoom (km, nd
 [works]
 dir = "data/streetworks"
 promoter = "(?i)cadent"
+
+# open gpi (gas pipe infrastructure) release (see src/pipes.rs): normalised into a
+# clean geoparquet for local duckdb analysis. gdn-gis --pipes rebuilds just this.
+[pipes]
+file = "data/gas-pipe-infrastructure-gpi_open.parquet"
+out = "dist/pipes.parquet"

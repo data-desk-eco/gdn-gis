@@ -11,11 +11,15 @@
 //              start, end, traffic management, location type — fetched lazily by
 //              map.html for the click card. permits whose final permit_status is
 //              cancelled/refused/revoked (digs that never happened) are dropped.
+//   works.parquet  the same permits as geoparquet (full-precision bng point,
+//              typed dates) for local duckdb analysis.
 
 use std::collections::{hash_map::Entry, HashMap};
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::sync::Arc;
 
+use arrow::array::{ArrayRef, BinaryArray, BooleanArray, Date32Array, StringArray};
 use flate2::read::MultiGzDecoder;
 use rayon::prelude::*;
 use regex::Regex;
@@ -66,7 +70,7 @@ fn centroid(wkt: &str) -> Option<(f64, f64)> {
 }
 
 /// unix day number from an iso date prefix (howard hinnant's civil algorithm).
-fn day(s: &str) -> f32 {
+fn day(s: &str) -> i32 {
     let p = |a, b| s.get(a..b).and_then(|t| t.parse::<i64>().ok()).unwrap_or(0);
     let (mut y, m, d) = (p(0, 4), p(5, 7), p(8, 10));
     if m <= 2 {
@@ -75,10 +79,10 @@ fn day(s: &str) -> f32 {
     let era = y.div_euclid(400);
     let yoe = y - era * 400;
     let doy = (153 * ((m + 9) % 12) + 2) / 5 + d - 1;
-    (era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468) as f32
+    (era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468) as i32
 }
 
-pub fn write(w: &WorksCfg, m: &MapCfg) {
+pub fn write(w: &WorksCfg, m: &MapCfg, crs: &str) {
     let prom = Regex::new(&w.promoter).unwrap();
     let files: Vec<_> = std::fs::read_dir(&w.dir)
         .expect("works dir")
@@ -133,7 +137,7 @@ pub fn write(w: &WorksCfg, m: &MapCfg) {
             a
         });
 
-    let mut rows: Vec<([f32; 4], [String; 10])> = best
+    let mut rows: Vec<([f64; 2], i32, bool, [String; 10])> = best
         .into_values()
         .filter_map(|e| {
             if matches!(e.permit_status.as_deref(), Some("cancelled" | "refused" | "revoked")) {
@@ -142,10 +146,12 @@ pub fn write(w: &WorksCfg, m: &MapCfg) {
             let (x, y) = centroid(e.works_location_coordinates.as_deref()?)?;
             let start = e.actual_start_date_time.clone().or(e.proposed_start_date.clone()).unwrap_or_default();
             let end = e.actual_end_date_time.clone().or(e.proposed_end_date.clone()).unwrap_or_default();
-            let flag = e.work_category_ref.as_deref().unwrap_or("").contains("emergency") as u8 as f32;
+            let em = e.work_category_ref.as_deref().unwrap_or("").contains("emergency");
             let f = |s: Option<String>| s.unwrap_or_default().replace(['\t', '\n'], " ").trim().to_string();
             Some((
-                [(x / 1000.0) as f32, (y / 1000.0) as f32, day(&start), flag],
+                [x, y],
+                day(&start),
+                em,
                 [
                     f(e.permit_reference_number),
                     f(e.work_category),
@@ -161,19 +167,48 @@ pub fn write(w: &WorksCfg, m: &MapCfg) {
             ))
         })
         .collect();
-    rows.sort_by(|a, b| a.0[2].total_cmp(&b.0[2]).then_with(|| a.1[0].cmp(&b.1[0])));
+    rows.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.3[0].cmp(&b.3[0])));
 
     let mut wf = BufWriter::new(File::create(format!("{}/works.f32", m.dir)).unwrap());
     let mut wt = BufWriter::new(File::create(format!("{}/works.tsv", m.dir)).unwrap());
+    let n = rows.len();
     let mut nem = 0usize;
-    for (rec, det) in &rows {
-        for v in rec {
+    let (mut sd, mut ed): (Vec<Option<i32>>, Vec<Option<i32>>) = (Vec::with_capacity(n), Vec::with_capacity(n));
+    let mut geom = Vec::with_capacity(n);
+    let (mut lo, mut hi) = ([f64::MAX; 2], [f64::MIN; 2]);
+    for ([x, y], d, em, det) in &rows {
+        for v in [(*x / 1000.0) as f32, (*y / 1000.0) as f32, *d as f32, *em as u8 as f32] {
             wf.write_all(&v.to_le_bytes()).unwrap();
         }
         writeln!(wt, "{}", det.join("\t")).unwrap();
-        nem += rec[3] as usize;
+        nem += *em as usize;
+        sd.push((det[6].len() == 10).then(|| day(&det[6])));
+        ed.push((det[7].len() == 10).then(|| day(&det[7])));
+        let mut g = vec![1u8];
+        g.extend(1u32.to_le_bytes());
+        g.extend(x.to_le_bytes());
+        g.extend(y.to_le_bytes());
+        geom.push(g);
+        (lo[0], lo[1], hi[0], hi[1]) = (lo[0].min(*x), lo[1].min(*y), hi[0].max(*x), hi[1].max(*y));
     }
     wf.flush().unwrap();
     wt.flush().unwrap();
-    eprintln!("  works: {} immediate digs ({} emergency)  ->  {}/works.*", rows.len(), nem, m.dir);
+
+    let s = |i: usize| Arc::new(StringArray::from_iter_values(rows.iter().map(|r| r.3[i].as_str()))) as ArrayRef;
+    let cols = vec![
+        ("permit".into(), s(0)),
+        ("category".into(), s(1)),
+        ("emergency".into(), Arc::new(BooleanArray::from_iter(rows.iter().map(|r| Some(r.2)))) as _),
+        ("status".into(), s(2)),
+        ("street".into(), s(3)),
+        ("town".into(), s(4)),
+        ("authority".into(), s(5)),
+        ("start_date".into(), Arc::new(Date32Array::from(sd)) as _),
+        ("end_date".into(), Arc::new(Date32Array::from(ed)) as _),
+        ("traffic_management".into(), s(8)),
+        ("location_type".into(), s(9)),
+        ("geometry".into(), Arc::new(BinaryArray::from_iter_values(geom.iter())) as _),
+    ];
+    crate::geoparquet(&format!("{}/works.parquet", m.dir), vec![cols], r#""Point""#, crs, [lo[0], lo[1], hi[0], hi[1]]);
+    eprintln!("  works: {} immediate digs ({} emergency)  ->  {}/works.*", n, nem, m.dir);
 }

@@ -31,6 +31,7 @@ scripts/build-years.sh                                 # laid-year sidecar (need
 cargo build --release
 ./target/release/gdn-gis                # extract the bundle -> geoparquet + map artefacts
 ./target/release/gdn-gis --works        # rebuild just the incident layer
+./target/release/gdn-gis --pipes        # rebuild just the open-GPI geoparquet
 ./target/release/gdn-gis --terrain      # rebuild the relief tiers from the fetched DTM
 ./target/release/gdn-gis --buildings    # rebuild the buildings layer from the pbf
 ```
@@ -68,6 +69,12 @@ fragments of each OS feature. Key columns: `feature_id`, `pressure` /
 `pressure_code`, `diameter_mm`, `material`, `inserted` (+ `host_*` for relined
 mains), `network_area`, `length_m`, `survey_date`, `geometry` (WKB). See
 `config.toml` for the full schema.
+
+Two sibling GeoParquets serve local DuckDB analysis: `dist/works.parquet` —
+the promoter's immediate street-works permits (point centroid in EPSG:27700,
+typed dates, `emergency` flag), and `dist/pipes.parquet` — the open GPI
+release normalised to the same vocabulary (`pressure_code`, `diameter_mm`,
+`material`, `host_*` / `inserted`; WKB MultiLineStrings in OGC:CRS84).
 
 Alongside it, the extractor writes the WebGPU map artefacts (`dist/map.*`,
 `terr*.bin`, `bldg.*`, `works.*`) served by `web/map.html`;

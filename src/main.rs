@@ -7,7 +7,7 @@
 // (password, layer filter, attribute vocabulary, labelling, crs) lives in a toml
 // config; the engine here is generic.
 //
-// usage: gdn-gis [CONFIG.toml] [ZIP] [-o OUT] [-p PASSWORD] [--square SK] [--limit N] [-j JOBS] [--works]
+// usage: gdn-gis [CONFIG.toml] [ZIP] [-o OUT] [-p PASSWORD] [--square SK] [--limit N] [-j JOBS] [--works|--pipes]
 //
 // the two source datasets are fetched by the standalone scripts under scripts/
 // (fetch-maps.sh, fetch-works.sh); this binary is the pure parser.
@@ -35,8 +35,9 @@ use parquet::file::properties::WriterProperties;
 
 mod bldg; // osm buildings layer (dist/bldg.bin / .idx / .tsv / .tofs)
 mod map; // gpu-map artefact generation (dist/map.bin / .idx / .base.bin / .json)
+mod pipes; // open gpi release -> clean geoparquet (dist/pipes.parquet)
 mod terrain; // relief tiers (dist/terr0.bin / terr1.bin / terr1.idx)
-mod works; // streetworks incident artefacts (dist/works.f32 / .tsv)
+mod works; // streetworks incident artefacts (dist/works.f32 / .tsv / .parquet)
 
 // cgm class-4 graphical primitives we treat as geometry
 const POLYLINE: u8 = 1;
@@ -81,6 +82,8 @@ struct Config {
     map: Option<map::MapCfg>,
     #[serde(default)]
     works: Option<works::WorksCfg>,
+    #[serde(default)]
+    pipes: Option<pipes::PipesCfg>,
 }
 
 #[derive(Deserialize)]
@@ -811,8 +814,12 @@ fn main() {
 
     // single-layer modes: regenerate one artefact family without touching the zip
     let mcfg = || cfg.map.as_ref().expect("no [map]");
+    let mats = || cfg.spec.as_ref().map(|s| s.materials.clone()).unwrap_or_default();
     if argv.iter().any(|a| a == "--works") {
-        return works::write(cfg.works.as_ref().expect("no [works]"), mcfg());
+        return works::write(cfg.works.as_ref().expect("no [works]"), mcfg(), &cfg.crs);
+    }
+    if argv.iter().any(|a| a == "--pipes") {
+        return pipes::write(cfg.pipes.as_ref().expect("no [pipes]"), &mats());
     }
     if argv.iter().any(|a| a == "--terrain") {
         return terrain::write(mcfg());
@@ -914,9 +921,33 @@ fn main() {
     if let Some(m) = &cfg.map {
         map::write(&rows, &cfg, m);
         if let Some(w) = &cfg.works {
-            works::write(w, m);
+            works::write(w, m, &cfg.crs);
         }
     }
+    if let Some(p) = &cfg.pipes {
+        pipes::write(p, &mats());
+    }
+}
+
+/// write a geoparquet: zstd, wkb `geometry` column, geo footer with types/crs/bbox.
+/// batches are (name, column) lists sharing the first batch's shape.
+pub(crate) fn geoparquet(out: &str, batches: Vec<Vec<(String, ArrayRef)>>, gtypes: &str, crs: &str, bbox: [f64; 4]) {
+    let fields: Vec<Field> = batches[0].iter().map(|(n, a)| Field::new(n, a.data_type().clone(), true)).collect();
+    let schema = Arc::new(Schema::new(fields));
+    if let Some(p) = std::path::Path::new(out).parent() {
+        std::fs::create_dir_all(p).ok();
+    }
+    let geo = format!(
+        r#"{{"version":"1.1.0","primary_column":"geometry","columns":{{"geometry":{{"encoding":"WKB","geometry_types":[{gtypes}],"crs":{crs},"bbox":[{},{},{},{}]}}}}}}"#,
+        bbox[0], bbox[1], bbox[2], bbox[3]
+    );
+    let props = WriterProperties::builder().set_compression(Compression::ZSTD(ZstdLevel::default())).build();
+    let mut w = ArrowWriter::try_new(File::create(out).unwrap(), schema.clone(), Some(props)).unwrap();
+    for cols in batches {
+        w.write(&RecordBatch::try_new(schema.clone(), cols.into_iter().map(|(_, a)| a).collect()).unwrap()).unwrap();
+    }
+    w.append_key_value_metadata(KeyValue::new("geo".into(), geo));
+    w.close().unwrap();
 }
 
 fn write_parquet(rows: &[Row], cfg: &Config, out: &str, t0: Instant) {
@@ -1016,22 +1047,7 @@ fn write_parquet(rows: &[Row], cfg: &Config, out: &str, t0: Instant) {
     cols.push(("etype".into(), Arc::new(StringArray::from(et))));
     cols.push(("geometry".into(), Arc::new(BinaryArray::from_iter(geomb.iter().map(Some)))));
 
-    let fields: Vec<Field> = cols.iter().map(|(name, arr)| Field::new(name, arr.data_type().clone(), true)).collect();
-    let schema = Arc::new(Schema::new(fields));
-    let batch = RecordBatch::try_new(schema.clone(), cols.into_iter().map(|(_, a)| a).collect()).unwrap();
-
-    if let Some(p) = std::path::Path::new(out).parent() {
-        std::fs::create_dir_all(p).ok();
-    }
-    let geo = format!(
-        r#"{{"version":"1.1.0","primary_column":"geometry","columns":{{"geometry":{{"encoding":"WKB","geometry_types":["LineString","MultiLineString","Polygon"],"crs":{},"bbox":[{},{},{},{}]}}}}}}"#,
-        cfg.crs, minx, miny, maxx, maxy
-    );
-    let props = WriterProperties::builder().set_compression(Compression::ZSTD(ZstdLevel::default())).build();
-    let mut w = ArrowWriter::try_new(File::create(out).unwrap(), schema, Some(props)).unwrap();
-    w.write(&batch).unwrap();
-    w.append_key_value_metadata(KeyValue::new("geo".into(), geo));
-    w.close().unwrap();
+    geoparquet(out, vec![cols], r#""LineString","MultiLineString","Polygon""#, &cfg.crs, [minx, miny, maxx, maxy]);
 
     // summary
     eprintln!("\n  {n} features  ->  {out}");
