@@ -94,3 +94,10 @@ pair (`coast.u16`, `places.tsv`) directly to `dist/`, and
 `scripts/build-fatal.sh` the fatal pair (`fatal.f32`, `fatal.tsv` — a
 hand-curated record of fatal gas-main explosions from `scripts/fatal.csv`,
 shown as red circles).
+
+### 4. Deploy
+
+Pushing `main` publishes `web/` to Pages (research.datadesk.eco/gdn-gis);
+`scripts/sync-data.sh [file...]` pushes `dist/` artefacts to the public
+bucket it reads from (`gs://gdn-gis-data`) — whole-file residents upload
+gzip-transcoded, range-served blobs raw.
