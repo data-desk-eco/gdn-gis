@@ -18,6 +18,7 @@ scripts/fetch-works.sh data/streetworks                # Street Manager permit a
 scripts/fetch-terrain.sh                               # OS Terrain 50 (national relief)
 scripts/fetch-lidar.py                                 # EA 1 m LiDAR DTM (resumable, ~1 h)
 scripts/fetch-buildings.sh                             # Geofabrik England OSM extract
+scripts/fetch-basemap.py                               # GB coastline (ONS) + place names (OS Open Names)
 scripts/build-years.sh                                 # laid-year sidecar (needs duckdb)
 ```
 
@@ -69,4 +70,6 @@ mains), `network_area`, `length_m`, `survey_date`, `geometry` (WKB). See
 `config.toml` for the full schema.
 
 Alongside it, the extractor writes the WebGPU map artefacts (`dist/map.*`,
-`terr*.bin`, `bldg.*`, `works.*`) served by `web/map.html`.
+`terr*.bin`, `bldg.*`, `works.*`) served by `web/map.html`;
+`scripts/fetch-basemap.py` adds the basemap pair (`coast.u16`, `places.tsv`)
+directly to `dist/`.

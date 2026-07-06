@@ -38,11 +38,11 @@ fn bng(lon: f64, lat: f64) -> (f64, f64) {
     let nu = a / (1.0 - e2 * sp * sp).sqrt();
     let (x, y, z) = (nu * cp * (lon * d).cos(), nu * cp * (lon * d).sin(), nu * (1.0 - e2) * sp);
     // helmert wgs84→osgb36
-    let s = -20.4894e-6;
+    let s = 20.4894e-6;
     let (rx, ry, rz) = (-0.1502 / 3600.0 * d, -0.2470 / 3600.0 * d, -0.8421 / 3600.0 * d);
-    let (x, y, z) = (-446.448 + (1.0 + s) * x + rz * y - ry * z,
-                     125.157 - rz * x + (1.0 + s) * y + rx * z,
-                     -542.060 + ry * x - rx * y + (1.0 + s) * z);
+    let (x, y, z) = (-446.448 + (1.0 + s) * x - rz * y + ry * z,
+                     125.157 + rz * x + (1.0 + s) * y - rx * z,
+                     -542.060 - ry * x + rx * y + (1.0 + s) * z);
     // cartesian → airy geodetic (two newton steps suffice at this precision)
     let (a, b) = (6377563.396, 6356256.909);
     let e2 = 1.0 - (b * b) / (a * a);

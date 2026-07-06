@@ -2,11 +2,11 @@
 <title>UK gas network</title><link rel=icon href=data:,><style>
 html,body{margin:0;height:100%;background:#fff;overflow:hidden;font:13px/1.4 system-ui,sans-serif;color:#444a55}canvas{display:block;width:100vw;height:100vh;cursor:grab;touch-action:none}canvas:active{cursor:grabbing}
 #hud,#leg{position:fixed;top:12px;pointer-events:none;text-shadow:0 1px 3px #fff}#hud{left:14px}#hud b{font-size:15px;color:#111}#hud small{opacity:.55}#leg{right:14px;display:grid;grid-template-columns:auto auto;gap:1px 16px;pointer-events:auto;cursor:pointer;user-select:none}
-.key{display:flex;align-items:center;gap:6px;opacity:.95}.key.off{opacity:.25}.key i{width:14px;height:3px;border-radius:2px;flex:none}.key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #222;margin:0 2.5px}#msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}#tp{position:fixed;left:14px;bottom:14px;pointer-events:none;text-shadow:0 1px 3px #fff}#tp:empty{display:none}#tp b{color:#111}#tp span{color:#444a55}
+.key{display:flex;align-items:center;gap:6px;opacity:.95}.key.off{opacity:.25}.key i{width:14px;height:3px;border-radius:2px;flex:none}.key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #222;margin:0 2.5px}#msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}#tp{position:fixed;left:14px;top:36px;pointer-events:none;text-shadow:0 1px 3px #fff}#pl span{position:fixed;transform:translate(-50%,-50%);pointer-events:none;white-space:nowrap;color:#5a616e;text-shadow:0 0 3px #fff,0 0 3px #fff}#xm{position:fixed;transform:translate(-50%,-50%);pointer-events:none;color:#111;font-weight:700;display:none}#tp:empty{display:none}#tp b{color:#111}#tp span{color:#444a55}
 #tl{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;background:#ffffffd0;border:1px solid #00000022;border-radius:8px;padding:6px 12px;backdrop-filter:blur(4px)}#tl button{all:unset;cursor:pointer;width:16px;text-align:center;color:#111}#tl input{width:min(34vw,300px);accent-color:#4e93d0}#tl span{font-variant-numeric:tabular-nums;width:34px;color:#111}</style>
 <canvas id=cv></canvas>
-<div id=hud><b>UK gas network</b><br><small>drag pan · right-drag / two-finger twist orbit · scroll zoom</small></div>
-<div id=leg></div><div id=tl><button id=play>⏸</button><input id=yrs type=range><span id=ylab></span></div><div id=msg>loading…</div><div id=tp></div>
+<div id=hud><b>UK gas network</b></div>
+<div id=leg></div><div id=pl></div><div id=xm>×</div><div id=tl><button id=play>⏸</button><input id=yrs type=range><span id=ylab></span></div><div id=msg>loading…</div><div id=tp></div>
 <script type=module>
 const MATS=[['ef4b3d','cast iron',0],['f28e2b','spun iron',1],['edc948','ductile iron',4],['ff2d9b','m.p. ductile iron'],['76b7b2','steel',5],['b07aa1','asbestos cement',2],['59a14f','pvc',6],['9c755f','lead',3],['4e93d0','polyethylene',7],['4d5261','unknown']]
 let mask=4095
@@ -22,7 +22,8 @@ const M=await(await fetch(D+'map.json')).json(),MX=M.minx,MY=M.miny,CELL=M.cell,
 const BU=GPUBufferUsage,TU=GPUTextureUsage,Q=dev.queue
 const uni=dev.createBuffer({size:128,usage:BU.UNIFORM|BU.COPY_DST}),lutB=dev.createBuffer({size:N*4,usage:BU.STORAGE|BU.COPY_DST})
 const tex=d=>dev.createTexture({size:d,format:'r16uint',usage:TU.TEXTURE_BINDING|TU.COPY_DST}),t0T=tex([T0N,T0N]),t1T=tex([T1P,T1P,T1L])
-let tick=0,sel=-1,wkVB,wkN=0,wk,det,baseVB,baseN=0,tofs,timer,t0cpu,yr=Y0,playing=true,pt0=0
+let tick=0,sel=-1,wkVB,wkN=0,wk,det,baseVB,baseN=0,coastVB,coastN=0,places=[],tofs,timer,t0cpu,yr=Y0,playing=true,pt0=0
+const pool=[...Array(40)].map(()=>pl.appendChild(document.createElement('span')))
 const cam={t:[MX+NC*CELL/2,MY+NR*CELL/2],d:Math.max(NC,NR)*CELL/1.9/TAN,a:0,p:0},S=()=>1/(cam.d*TAN),maxP=()=>1.38*clamp(2*S()/TH-.6,0,1)
 const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],norm=a=>{const l=Math.hypot(...a);return a.map(v=>v/l)}
 const basis=()=>{const{a,p,d}=cam,h=d*Math.sin(p),ez=hgtC(...cam.t),e=[cam.t[0]+h*Math.sin(a),cam.t[1]-h*Math.cos(a),ez+d*Math.cos(p)]
@@ -50,6 +51,8 @@ const wmod=dev.createShaderModule({code:WG+`struct O{@builtin(position)p:vec4f,@
 let q=vec2f(vec2u(i&1u,i>>1u))*2.-1.;let hot=select(0.,1.,f32(inst)==v.ms.z);let c=v.vp*vec4f(pt,hgt(pt)+.004,1.);let r=v.ms.xy*select(1.,1.8,hot>.5);return O(vec4f(c.xy+q*r*c.w,c.zw),q,hot,df.y);}
 @fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32)->@location(0)vec4f{let a=smoothstep(.13,.07,abs(length(q)-.89));if(a<.01){discard;}
 return vec4f(select(select(vec3f(.55,.58,.64),vec3f(.07,.07,.07),em>.5),vec3f(0.,.55,.9),hot>.5),a*.95);}`})
+const cmod=dev.createShaderModule({code:WG+`@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u)->@builtin(position)vec4f{return v.vp*vec4f(vec2f(select(q.xy,q.zw,i==1u))*.02,.001,1.);}
+@fragment fn fs()->@location(0)vec4f{return vec4f(.42,.55,.65,.6);}`})
 const tmod=dev.createShaderModule({code:WG+`@vertex fn vs(@builtin(vertex_index)vi:u32,@builtin(instance_index)li:u32)->@builtin(position)vec4f{
 let k=vi>>1u;let st=v.tw.z;let nw=u32(v.tw.w);let nh=u32(v.tw2.x);var g:vec2f;
 if(li<nh){if(k+1u>=nw){return OFF;}g=v.tw.xy+st*vec2f(f32(k+(vi&1u)),f32(li));}else{if(k+1u>=nh){return OFF;}g=v.tw.xy+st*vec2f(f32(li-nh),f32(k+(vi&1u)));}let p=vec2f(${MX},${MY})+g*${T0S};return v.vp*vec4f(p,hgt(p),1.);}
@@ -58,7 +61,7 @@ const bgl=dev.createBindGroupLayout({entries:[{buffer:{}},{texture:{sampleType:'
 const blend={color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}},layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]})
 const attrs=(arrayStride,a,b)=>[{arrayStride,stepMode:'instance',attributes:[{shaderLocation:0,offset:0,format:a},{shaderLocation:1,offset:8,format:b}]}],V12=attrs(12,'uint16x4','uint16x2')
 const mk=(m,c,buffers,topology='line-list')=>dev.createRenderPipeline({layout,primitive:{topology},vertex:{module:m,entryPoint:'vs',constants:c,buffers},fragment:{module:m,entryPoint:'fs',constants:c,targets:[{format:fmt,blend}]}})
-const pipe=mk(mod,{PASS:0},V12),pipeHL=mk(mod,{PASS:1},V12),bpipe=mk(bmod,undefined,V12),twire=mk(tmod),wpipe=mk(wmod,undefined,attrs(16,'float32x2','float32x2'),'triangle-strip')
+const pipe=mk(mod,{PASS:0},V12),pipeHL=mk(mod,{PASS:1},V12),bpipe=mk(bmod,undefined,V12),twire=mk(tmod),cpipe=mk(cmod,undefined,[{arrayStride:8,stepMode:'instance',attributes:[{shaderLocation:0,offset:0,format:'uint16x4'}]}]),wpipe=mk(wmod,undefined,attrs(16,'float32x2','float32x2'),'triangle-strip')
 const bg=dev.createBindGroup({layout:bgl,entries:[{buffer:uni},t0T.createView(),t1T.createView(),{buffer:lutB}].map((resource,binding)=>({binding,resource}))})
 const mkbuf=ab=>{const b=dev.createBuffer({size:Math.max(12,ab.byteLength),usage:BU.VERTEX|BU.COPY_DST});Q.writeBuffer(b,0,ab);return b}
 const layers={},mklayer=(id,blob,cnt,bytes,cap,gate,load,evict)=>{let a=0;layers[id]={blob,cnt,off:Uint32Array.from(cnt,c=>(a+=c)-c),bytes,cap,gate,load,evict,cells:new Map()}}
@@ -82,7 +85,7 @@ const hgtC=(x,y)=>{const c=layers.terr?.cells.get(clamp((x-MX)/CELL|0,0,NC-1)+NC
 const setYr=v=>{yr=v;yrs.value=v;ylab.textContent=Math.min(v|0,Y1);draw()},setPlay=p=>{playing=p;play.textContent=p?'⏸':'▶'}
 yrs.min=Y0;yrs.max=Y1+1;yrs.step=.1;yrs.value=Y0;yrs.oninput=()=>{setPlay(false);setYr(+yrs.value)}
 play.onclick=()=>{setPlay(!playing);if(playing){if(yr>Y1)yr=Y0;pt0=0;requestAnimationFrame(anim)}}
-function anim(t){if(!playing)return;if(pt0)setYr(Math.min(yr+(t-pt0)/2e4*(Y1+1-Y0),Y1+1));pt0=t;if(yr>Y1)return setPlay(false);requestAnimationFrame(anim)}
+function anim(t){if(!playing)return;if(pt0)setYr(Math.min(yr+(t-pt0)/8e3*(Y1+1-Y0),Y1+1));pt0=t;if(yr>Y1)return setPlay(false);requestAnimationFrame(anim)}
 const dpr=Math.min(devicePixelRatio||1,2),RPX=4.5*dpr,sched=()=>{clearTimeout(timer);timer=setTimeout(update,110)}
 const resize=()=>{cv.width=innerWidth*dpr|0;cv.height=innerHeight*dpr|0;draw();sched()}
 const tip=l=>{tp.innerHTML=l?l.map((s,i)=>`<${i?'span':'b'}>${s}</${i?'span':'b'}>`).join('<br>'):'';draw()}
@@ -93,11 +96,20 @@ function draw(){const s=S(),vp=vpMat(),bb=rect()[4]
  const st=Math.max(.05,14/(T0S*s*cv.height/2),(gX-gx)/499,(gY-gy)/499),i0=Math.floor(gx/st)*st,j0=Math.floor(gy/st)*st,nw=Math.ceil((gX-i0)/st)+1,nh=Math.ceil((gY-j0)/st)+1
  Q.writeBuffer(uni,0,new Float32Array([...vp,RPX*2/cv.width,RPX*2/cv.height,sel,yr>Y1?9e3:yr,i0,j0,st,nw,nh,mask,0,cam.p]))
  const e=dev.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),clearValue:{r:1,g:1,b:1,a:1},loadOp:'clear',storeOp:'store'}]});p.setBindGroup(0,bg)
+ if(coastN){p.setPipeline(cpipe);p.setVertexBuffer(0,coastVB);p.draw(2,coastN)}
  if(cam.p>.02||s>=TH){p.setPipeline(twire);p.draw(2*Math.max(nw,nh),nw+nh)}
  const B=layers.bldg;if(B&&s>=BTH){p.setPipeline(bpipe);for(const o of B.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(6,o.n)}}
  for(const pl of[pipe,pipeHL]){p.setPipeline(pl);if(baseN&&s<TH){p.setVertexBuffer(0,baseVB);p.draw(2,baseN)}
   if(layers.pipe&&s>=TH)for(const o of layers.pipe.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(2,o.n)}}
- if(wkN&&s>=TH){p.setPipeline(wpipe);p.setVertexBuffer(0,wkVB);p.draw(4,wkN)}p.end();Q.submit([e.finish()])}
+ if(wkN&&s>=TH){p.setPipeline(wpipe);p.setVertexBuffer(0,wkVB);p.draw(4,wkN)}p.end();Q.submit([e.finish()])
+ let li=0;const hits=[]
+ for(const[x,y,thr,n]of places){if(thr>=s||li===40)break
+  if(x<bb[0]||x>bb[1]||y<bb[2]||y>bb[3])continue
+  const q=proj(vp,x,y,hgtC(x,y));if(!q||q[0]<0||q[0]>cv.width||q[1]<0||q[1]>cv.height||hits.some(h=>Math.hypot(h[0]-q[0],h[1]-q[1])<64*dpr))continue
+  hits.push(q);pool[li].textContent=n;pool[li++].style.cssText=`left:${q[0]/dpr}px;top:${q[1]/dpr}px;font-size:${thr<.004?12.5:thr<.02?11:thr<.1?10:9}px`}
+ for(;li<40;li++)pool[li].style.display='none'
+ const mq=proj(vp,625.384,256.485,hgtC(625.384,256.485))
+ xm.style.cssText=mq?`display:block;left:${mq[0]/dpr}px;top:${mq[1]/dpr}px`:''}
 const update=()=>{const ps=Object.values(layers).map(page);draw();return Promise.all(ps)}
 const proj=(vp,x,y,z)=>{const w=vp[3]*x+vp[7]*y+vp[11]*z+vp[15];return w<=0?null:[(vp[0]*x+vp[4]*y+vp[8]*z+vp[12])/w*.5*cv.width+cv.width/2,cv.height/2-(vp[1]*x+vp[5]*y+vp[9]*z+vp[13])/w*.5*cv.height]}
 const bCache=new Map()
@@ -129,7 +141,7 @@ cv.onpointermove=e=>{if(!pts.has(e.pointerId))return;pts.set(e.pointerId,e)
 cv.onwheel=e=>{e.preventDefault();dolly(Math.exp(e.deltaY*.003),e.offsetX*dpr,e.offsetY*dpr);draw();sched()}
 addEventListener('resize',resize)
 const get=f=>fetch(D+f).then(r=>r.ok?r.arrayBuffer():null).catch(()=>null);resize()
-const[pidx,baseAB,t0AB,t1idx,bidx,btofs,wkAB]=await Promise.all(['map.idx','map.base.bin','terr0.bin','terr1.idx','bldg.idx','bldg.tofs','works.f32'].map(get))
+const[pidx,baseAB,t0AB,t1idx,bidx,btofs,wkAB,coAB,plAB]=await Promise.all(['map.idx','map.base.bin','terr0.bin','terr1.idx','bldg.idx','bldg.tofs','works.f32','coast.u16','places.tsv'].map(get))
 if(!pidx||!baseAB)die('map artefacts missing — run the extractor')
 const vbload=(id,b)=>({vb:mkbuf(b),n:b.byteLength/12})
 mklayer('pipe','map.bin',new Uint32Array(pidx),12,700,TH,vbload);baseVB=mkbuf(baseAB);baseN=baseAB.byteLength/12
@@ -142,6 +154,8 @@ if(t1idx){const bits=new Uint8Array(t1idx),cnt=Uint8Array.from({length:N},(_,i)=
  layers.terr.re=(id,e)=>{if(e.cpu&&e.l==null)e.l=toL(id,e.cpu)}}
 if(bidx&&btofs){tofs=new Uint32Array(btofs);mklayer('bldg','bldg.bin',new Uint32Array(bidx),12,250,BTH,vbload)}
 if(wkAB){wk=new Float32Array(wkAB);wkVB=mkbuf(wkAB);wkN=wk.length/4}
+if(coAB){coastVB=mkbuf(coAB);coastN=coAB.byteLength/8}
+if(plAB)places=new TextDecoder().decode(plAB).trim().split('\n').map(l=>{const[n,x,y,r]=l.split('\t');return[+x,+y,18e3/+r,n]})
 Q.writeBuffer(lutB,0,lut);msg.remove();await update();requestAnimationFrame(anim)
 window.dbg=()=>({cam,yr,wk,wkN,sel,layers,draw,vpMat,proj,toWorld,hgtCPU:hgtC,pick,go:(x,y,z,p=0,a=0)=>{cam.t=[x,y];cam.d=1/(z*TAN);cam.a=a;cam.p=p;return update()}})
 </script>
