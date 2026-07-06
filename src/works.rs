@@ -137,7 +137,7 @@ pub fn write(w: &WorksCfg, m: &MapCfg, crs: &str) {
             a
         });
 
-    let mut rows: Vec<([f64; 2], i32, bool, [String; 10])> = best
+    let mut rows: Vec<([f64; 2], i32, bool, [String; 11])> = best
         .into_values()
         .filter_map(|e| {
             if matches!(e.permit_status.as_deref(), Some("cancelled" | "refused" | "revoked")) {
@@ -163,6 +163,7 @@ pub fn write(w: &WorksCfg, m: &MapCfg, crs: &str) {
                     end.get(..10).unwrap_or("").into(),
                     f(e.traffic_management_type),
                     f(e.works_location_type),
+                    f(e.promoter_organisation),
                 ],
             ))
         })

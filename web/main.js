@@ -165,9 +165,10 @@ async function pick(x, y) {
       return ui.tip([loc || '(unnamed site)', `national transmission · ${(fac || 'site').toLowerCase()}`])
     }
     const det = await details()
-    const [permit, cat, status, street, town, auth, start, end, tm, loc] = det[state.sel].split('\t')
+    const [permit, cat, status, street, town, auth, start, end, tm, loc, promoter] = det[state.sel].split('\t')
     return ui.tip([
       `${street || '(no street)'}${town ? ', ' + town : ''}`,
+      promoter.toLowerCase(),
       `${cat} · ${status.toLowerCase()}`,
       [loc, tm].filter(Boolean).join(' · ').toLowerCase(),
       start + (end && end !== start ? ' → ' + end : ''),
