@@ -1,187 +1,55 @@
-<!doctype html><html lang=en><meta charset=utf8><meta name=viewport content="width=device-width,initial-scale=1">
-<title>uk gas network</title><link rel=icon href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23fff'/><path d='M16 29V17L7 8' fill='none' stroke='%234e93d0' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/><path d='M16 17l9-5' fill='none' stroke='%23ef4b3d' stroke-width='4' stroke-linecap='round'/><circle cx='24' cy='24' r='4' fill='none' stroke='%2316181d' stroke-width='2.5'/></svg>"><style>
+<!doctype html>
+<html lang=en>
+<meta charset=utf8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>uk gas network</title>
+<link rel=icon href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%23fff'/><path d='M16 29V17L7 8' fill='none' stroke='%234e93d0' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'/><path d='M16 17l9-5' fill='none' stroke='%23ef4b3d' stroke-width='4' stroke-linecap='round'/><circle cx='24' cy='24' r='4' fill='none' stroke='%2316181d' stroke-width='2.5'/></svg>">
+<style>
 @import url(https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap);
-html,body{margin:0;height:100%;background:#fff;overflow:hidden;font:12px/1.4 'JetBrains Mono',monospace;text-transform:lowercase;color:#444a55}canvas{display:block;width:100vw;height:100vh;cursor:grab;touch-action:none}canvas:active{cursor:grabbing}
-#hud,#leg{position:fixed;top:12px;pointer-events:none;text-shadow:0 1px 3px #fff}#hud{left:14px}#hud b{font-size:15px;color:#111}#hud small{opacity:.55}#leg{right:14px;display:grid;gap:1px;justify-items:end;pointer-events:auto;cursor:pointer;user-select:none}
-.key{display:flex;flex-direction:row-reverse;align-items:center;gap:6px;opacity:.95}.key.off{opacity:.25}.key i{width:14px;height:3px;border-radius:2px;flex:none}.key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #222;margin:0 2.5px}#msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}#tp{position:fixed;left:14px;top:36px;pointer-events:none;text-shadow:0 1px 3px #fff}#pl span{position:fixed;transform:translate(-50%,-50%);pointer-events:none;white-space:nowrap;color:#5a616e;text-shadow:0 0 3px #fff,0 0 3px #fff}#tp:empty{display:none}#tp b{color:#111}#tp span{color:#444a55}
-#tl{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;background:#ffffffd0;border:1px solid #00000022;border-radius:8px;padding:6px 12px;backdrop-filter:blur(4px)}#tl button{all:unset;cursor:pointer;width:16px;text-align:center;color:#111}#tl input{width:min(34vw,300px);height:14px;-webkit-appearance:none;background:none;grid-area:1/1;pointer-events:none}#tl input::-webkit-slider-thumb{-webkit-appearance:none;pointer-events:auto;width:13px;height:13px;border-radius:50%;background:#4e93d0}#tl input::-moz-range-thumb{pointer-events:auto;width:13px;height:13px;border:0;border-radius:50%;background:#4e93d0}#rg{display:grid;align-items:center}#rg::before{content:'';grid-area:1/1;height:4px;border-radius:2px;background:#00000022}#tl span{font-variant-numeric:tabular-nums;min-width:34px;text-align:right;color:#111;white-space:nowrap}
-.logo{position:fixed;bottom:14px;right:14px;width:50px;height:50px;color:#000;opacity:.5;display:block}.logo:hover{opacity:.8}
-@media(max-width:640px){#tl{left:10px;right:10px;transform:none}#rg{flex:1}#tl input{width:100%}.logo{display:none}}</style>
+html,body{margin:0;height:100%;background:#fff;overflow:hidden;font:12px/1.4 'JetBrains Mono',monospace;text-transform:lowercase;color:#444a55}
+canvas{display:block;width:100vw;height:100vh;cursor:grab;touch-action:none}
+canvas:active{cursor:grabbing}
+
+/* hud (top left) + legend (top right) */
+#hud,#leg{position:fixed;top:12px;pointer-events:none;text-shadow:0 1px 3px #fff}
+#hud{left:14px}
+#hud b{font-size:15px;color:#111}
+#hud small{opacity:.55}
+#leg{right:14px;display:grid;gap:1px;justify-items:end;pointer-events:auto;cursor:pointer;user-select:none}
+.key{display:flex;flex-direction:row-reverse;align-items:center;gap:6px;opacity:.95}
+.key.off{opacity:.25}
+.key i{width:14px;height:3px;border-radius:2px;flex:none}
+.key i.dot{width:7px;height:7px;border-radius:50%;border:1px solid #222;margin:0 2.5px}
+
+/* loading message, tooltip, place labels */
+#msg{position:fixed;inset:0;display:grid;place-content:center;font-size:15px}
+#tp{position:fixed;left:14px;top:36px;pointer-events:none;text-shadow:0 1px 3px #fff}
+#tp:empty{display:none}
+#tp b{color:#111}
+#tp span{color:#444a55}
+#pl span{position:fixed;transform:translate(-50%,-50%);pointer-events:none;white-space:nowrap;color:#5a616e;text-shadow:0 0 3px #fff,0 0 3px #fff}
+
+/* timeline (bottom centre): play button + two overlaid range inputs (lo, yr) */
+#tl{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:10px;background:#ffffffd0;border:1px solid #00000022;border-radius:8px;padding:6px 12px;backdrop-filter:blur(4px)}
+#tl button{all:unset;cursor:pointer;width:16px;text-align:center;color:#111}
+#tl input{width:min(34vw,300px);height:14px;-webkit-appearance:none;background:none;grid-area:1/1;pointer-events:none}
+#tl input::-webkit-slider-thumb{-webkit-appearance:none;pointer-events:auto;width:13px;height:13px;border-radius:50%;background:#4e93d0}
+#tl input::-moz-range-thumb{pointer-events:auto;width:13px;height:13px;border:0;border-radius:50%;background:#4e93d0}
+#rg{display:grid;align-items:center}
+#rg::before{content:'';grid-area:1/1;height:4px;border-radius:2px;background:#00000022}
+#tl span{font-variant-numeric:tabular-nums;min-width:34px;text-align:right;color:#111;white-space:nowrap}
+
+.logo{position:fixed;bottom:14px;right:14px;width:50px;height:50px;color:#000;opacity:.5;display:block}
+.logo:hover{opacity:.8}
+@media(max-width:640px){#tl{left:10px;right:10px;transform:none}#rg{flex:1}#tl input{width:100%}.logo{display:none}}
+</style>
 <canvas id=cv></canvas>
 <div id=hud><b>uk gas network</b></div>
-<div id=leg></div><div id=pl></div><div id=tl><button id=play>⏸&#xfe0e;</button><div id=rg><input id=los type=range><input id=yrs type=range></div><span id=ylab></span></div><div id=msg>loading…</div><div id=tp></div><a class="logo" href="https://research.datadesk.eco/" target="_blank" rel="noopener"><svg viewBox="0 0 734.66 733.34"> <path fill="currentColor" d="M144.68,0c-4.92,0-9.63,1.99-13.05,5.52L4.17,136.69C1.49,139.44,0,143.12,0,146.96v440.75c-.01,3.83,1.54,7.6,4.22,10.32l128.48,130.9c2.77,2.82,6.56,4.41,10.51,4.41h224.12c49.96,0,98.27-9.63,143.61-28.63,43.81-18.36,83.08-44.69,116.71-78.24,33.61-33.53,59.98-72.67,78.37-116.33,19.01-45.12,28.64-93.17,28.64-142.81s-9.72-97.68-28.88-142.97c-18.5-43.74-44.99-83.02-78.72-116.76-33.73-33.73-73.02-60.22-116.76-78.72C465.01,9.72,416.91,0,367.33,0H144.68ZM29.46,152.93L128.48,51.03V455.48c0,8.13,6.59,14.73,14.73,14.73h224.12c56.73,0,102.88-46.15,102.88-102.88s-46.15-102.88-102.88-102.88h-73.42v-102.77h73.42c17.17,0,34.01,2.09,50.25,6.15,1.62,.41,3.24,.83,4.85,1.28,2.42,.67,4.82,1.38,7.2,2.13,31.02,9.82,59.45,27,83.11,50.67,26.1,26.1,44.31,57.97,53.46,92.74,1.49,5.66,2.74,11.4,3.74,17.2,.29,1.66,.55,3.32,.8,4.99,1.48,10.01,2.23,20.19,2.23,30.49s-.75,20.48-2.23,30.49c-.25,1.67-.51,3.33-.8,4.99-1,5.8-2.25,11.54-3.74,17.2-9.15,34.77-27.36,66.65-53.46,92.74-23.67,23.67-52.09,40.86-83.11,50.67-2.39,.76-4.79,1.47-7.2,2.13-1.61,.44-3.23,.87-4.85,1.28-16.23,4.06-33.08,6.15-50.25,6.15H29.46V152.93Zm264.45,140.98h73.42c40.48,0,73.42,32.94,73.42,73.42s-32.94,73.42-73.42,73.42h-73.42v-146.84Zm384.96,204.79c-16.9,40.12-41.13,76.09-72.02,106.91-30.92,30.85-67.02,55.05-107.29,71.93-41.71,17.48-86.19,26.34-132.22,26.34H149.39l-99.57-101.44H367.33c31.73,0,62.53-6.22,91.52-18.48,28-11.84,53.14-28.79,74.73-50.38,6.75-6.75,13.04-13.84,18.86-21.26,12.82-16.32,23.37-34.22,31.51-53.47,7.66-18.12,12.97-36.95,15.87-56.26,1.74-11.59,2.61-23.36,2.61-35.26s-.87-23.67-2.61-35.26c-2.9-19.32-8.2-38.14-15.87-56.26-8.14-19.25-18.7-37.15-31.51-53.47-5.83-7.42-12.12-14.51-18.86-21.26-21.59-21.59-46.73-38.54-74.73-50.38-28.99-12.26-59.79-18.48-91.52-18.48h-88.15c-8.13,0-14.73,6.59-14.73,14.73V440.75h-106.51V29.46h209.39c45.61,0,89.85,8.93,131.5,26.55,40.23,17.02,76.37,41.39,107.4,72.42,31.04,31.04,55.4,67.17,72.42,107.4,17.62,41.64,26.55,85.89,26.55,131.5s-8.86,89.89-26.33,131.37Z"/> </svg></a>
-<script type=module>
-const MATS=[['ef4b3d','cast iron',0],['f28e2b','spun iron',1],['edc948','ductile iron',4],['ff2d9b','m.p. ductile iron'],['76b7b2','steel',5],['b07aa1','asbestos cement',2],['59a14f','pvc',6],['9c755f','lead',3],['4e93d0','polyethylene',7],['4d5261','unknown']]
-let mask=4095
-leg.innerHTML=MATS.map(([h,l,b],i)=>`<div class=key data-b=${b??(i>3?8:9)}><i style=background:#${h}></i>${l}</div>`).join('')+'<div class=key data-b=10><i class=dot></i>emergency</div><div class=key data-b=11><i class=dot style=border-color:#8b8f99></i>urgent</div>'
-leg.onclick=e=>{const k=e.target.closest('.key');if(k){mask^=1<<k.dataset.b;k.classList.toggle('off');draw()}}
-const v3=h=>`vec3f(${[0,2,4].map(i=>(parseInt(h.substr(i,2),16)/255).toFixed(3))})`,PAL=MATS.filter(m=>m[2]>=0).sort((a,b)=>a[2]-b[2]).map(m=>v3(m[0]))
-const die=t=>{msg.textContent=t;throw t}
-if(!navigator.gpu)die('this browser has no webgpu')
-const dev=await(await navigator.gpu.requestAdapter())?.requestDevice()||die('no webgpu adapter')
-const ctx=cv.getContext('webgpu'),fmt=navigator.gpu.getPreferredCanvasFormat();ctx.configure({device:dev,format:fmt,alphaMode:'opaque'})
-const clamp=(v,a,b)=>v<a?a:v>b?b:v,D=/^(localhost|127\.|\[?::1)/.test(location.hostname)?'../dist/':'https://storage.googleapis.com/gdn-gis-data/'
-const M=await(await fetch(D+'map.json')).json(),MX=M.minx,MY=M.miny,CELL=M.cell,NC=M.ncols,NR=M.nrows,N=NC*NR,TH=M.detail_scale,BTH=M.bldg_scale,[Y0,Y1]=M.yr,T0N=M.t0.n,T0S=M.t0.step,T1P=M.t1.p,T1B=T1P*T1P*2,T1L=256,EX=1.5,TAN=Math.tan(25*Math.PI/180)
-const BU=GPUBufferUsage,TU=GPUTextureUsage,Q=dev.queue
-const[uni,uni2]=[0,0].map(_=>dev.createBuffer({size:128,usage:BU.UNIFORM|BU.COPY_DST})),lutB=dev.createBuffer({size:N*4,usage:BU.STORAGE|BU.COPY_DST})
-const tex=d=>dev.createTexture({size:d,format:'r16uint',usage:TU.TEXTURE_BINDING|TU.COPY_DST}),t0T=tex([T0N,T0N]),t1T=tex([T1P,T1P,T1L])
-let tick=0,sel=-1,wkVB,wkN=0,wk,det,baseVB,baseN=0,coastVB,coastN=0,places=[],tofs,timer,t0cpu,yr=Y0,lo=Y0,playing=true,pt0=0
-const pool=[...Array(40)].map(()=>pl.appendChild(document.createElement('span')))
-const cam={t:[MX+NC*CELL/2,MY+NR*CELL/2],d:Math.max(NC,NR)*CELL/1.9/TAN,a:0,p:0},S=()=>1/(cam.d*TAN),maxP=()=>1.38*clamp(2*S()/TH-.6,0,1)
-const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]],dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2],norm=a=>{const l=Math.hypot(...a);return a.map(v=>v/l)}
-const basis=()=>{const{a,p,d}=cam,h=d*Math.sin(p),ez=hgtC(...cam.t),e=[cam.t[0]+h*Math.sin(a),cam.t[1]-h*Math.cos(a),ez+d*Math.cos(p)]
- const z=norm([e[0]-cam.t[0],e[1]-cam.t[1],e[2]-ez]),x=norm(cross([-Math.sin(a)*Math.cos(p),Math.cos(a)*Math.cos(p),Math.sin(p)],z));return{e,ez,x,y:cross(z,x),z}}
-const vpMat=()=>{const n=cam.d*.02,A=1/(n/(cam.d*40+900)-1),t=1/TAN,u=t*cv.height/cv.width,{e,x,y,z}=basis(),c=i=>[u*x[i],t*y[i],A*z[i],-z[i]]
- return new Float32Array([...c(0),...c(1),...c(2),-u*dot(x,e),-t*dot(y,e),A*(n-dot(z,e)),dot(z,e)])}
-const toWorld=(px,py,F=6)=>{const{e,ez,x,y,z}=basis(),nx=(px/cv.width*2-1)*TAN*cv.width/cv.height,ny=(1-py/cv.height*2)*TAN,d=[0,1,2].map(i=>nx*x[i]+ny*y[i]-z[i]),s=Math.min(d[2]<-1e-4?(ez-e[2])/d[2]:1/0,F*cam.d)
- return[e[0]+s*d[0],e[1]+s*d[1]]}
-const ld=(t,l)=>`vec4f(vec4u(${[[0,0],[1,0],[0,1],[1,1]].map(o=>`textureLoad(${t},i+vec2u(${o}),${l}0).r`)}))`
-const WG=`struct V{vp:mat4x4f,ms:vec4f,tw:vec4f,tw2:vec4f,cd:f32};@group(0)@binding(0)var<uniform> v:V;@group(0)@binding(1)var t0:texture_2d<u32>;@group(0)@binding(2)var t1:texture_2d_array<u32>;@group(0)@binding(3)var<storage> lut:array<i32>;const OFF=vec4f(2e9,0.,0.,1.);
-fn q1(i:vec2u,l:u32)->vec4f{return ${ld('t1','l,')};}fn q0(i:vec2u)->vec4f{return ${ld('t0','')};}
-fn bl(q:vec4f,r:vec2f)->f32{return (mix(mix(q.x,q.y,r.x),mix(q.z,q.w,r.x),r.y)-1000.)*${EX*1e-4};}
-fn hgt(p:vec2f)->f32{let c=(p-vec2f(${MX},${MY}))/${CELL};let i=vec2u(clamp(vec2i(floor(c)),vec2i(0),vec2i(${NC-1},${NR-1})));let l=lut[i.x+${NC}u*i.y];if(l>=0){let f=clamp((c-vec2f(i))*${T1P-1}.,vec2f(0.),vec2f(${T1P-1-.001}));return bl(q1(vec2u(f),u32(l)),fract(f));}let g=clamp((p-vec2f(${MX},${MY}))/${T0S},vec2f(0.),vec2f(${T0N-1-.001}));return bl(q0(vec2u(g)),fract(g));}
-fn world(c:u32,q:vec2u)->vec2f{return vec2f(${MX},${MY})+vec2f(f32(c%${NC}u),f32(c/${NC}u))*${CELL}+vec2f(q)*${CELL/65535};}`
-const mod=dev.createShaderModule({code:WG+`override PASS:f32=0.;struct O{@builtin(position)p:vec4f,@location(0)@interpolate(flat)t:u32};
-@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->O{
-let yr=m.y>>8u;let bit=select(min(m.y&0x7fu,8u),9u,PASS>.5);let hide=select(v.ms.w<=${Y1}.,f32(yr)+${M.yr0}.>v.ms.w,yr>0u)||select(v.tw2.z>0.,f32(yr)+${M.yr0}.<v.tw2.z,yr>0u)||((u32(v.tw2.y)>>bit)&1u)==0u;if((PASS>.5&&(m.y&0x80u)==0u)||hide){return O(OFF,0u);}
-let A=world(m.x,q.xy);let B=world(m.x,q.zw);let ca=v.vp*vec4f(A,hgt(A)+.002,1.);let cb=v.vp*vec4f(B,hgt(B)+.002,1.);
-let c=select(ca,cb,i>1u);let d=normalize(cb.xy/cb.w-ca.xy/ca.w);
-return O(vec4f(c.xy+vec2f(-d.y,d.x)*(f32(i&1u)*2.-1.)*v.ms.xy*${(1/4.5).toFixed(4)}*c.w,c.zw),m.y&0xffu);}
-@fragment fn fs(@location(0)@interpolate(flat)t:u32)->@location(0)vec4f{if(PASS>.5){return vec4f(${v3('ff2d9b')},1.);}let n=t&0x7fu;if(n>7u){return vec4f(${v3('4d5261')},.55);}var pal=array<vec3f,8>(${PAL});return vec4f(pal[n],.82);}`})
-const bmod=dev.createShaderModule({code:WG+`@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->@builtin(position)vec4f{
-let p=world(m.x,select(q.xy,q.zw,i==1u||i==3u));return v.vp*vec4f(p,hgt(p)+select(f32(m.y>>8u),f32(m.y&0xffu),i>=2u&&i!=4u)*5e-4,1.);}
-@fragment fn fs()->@location(0)vec4f{return vec4f(.45,.47,.52,.5);}
-@vertex fn vsf(@builtin(vertex_index)i:u32,@location(0)q:vec4u,@location(1)m:vec2u)->@builtin(position)vec4f{
-let p=world(m.x,select(q.xy,q.zw,(i&1u)==1u));return v.vp*vec4f(p,hgt(p)+select(f32(m.y&0xffu),f32(m.y>>8u),i<2u)*5e-4,1.);}
-@fragment fn fsf()->@location(0)vec4f{return vec4f(.855,.865,.885,1.);}
-@vertex fn vsr(@builtin(vertex_index)i:u32,@location(0)a:vec4u,@location(1)b:vec4u)->@builtin(position)vec4f{
-let p=world(b.z,select(select(a.xy,a.zw,i==1u),b.xy,i==2u));return v.vp*vec4f(p,hgt(p)+f32(b.w&0xffu)*5e-4,1.);}
-@fragment fn fsr()->@location(0)vec4f{return vec4f(.855,.865,.885,1.);}`})
-const wmod=dev.createShaderModule({code:WG+`struct O{@builtin(position)p:vec4f,@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32,@location(3)@interpolate(flat)fd:f32};
-@vertex fn vs(@builtin(vertex_index)i:u32,@builtin(instance_index)inst:u32,@location(0)pt:vec2f,@location(1)df:vec2f)->O{if((df.x>0.&&1970.+df.x/365.2425>v.ms.w)||select(v.tw2.z>0.,1970.+df.x/365.2425<v.tw2.z,df.x>0.)||((u32(v.tw2.y)>>select(11u,10u,df.y>.5))&1u)==0u){return O(OFF,vec2f(0.),0.,0.,0.);}
-let q=vec2f(vec2u(i&1u,i>>1u))*2.-1.;let hot=select(0.,1.,f32(inst)==v.ms.z);let c=v.vp*vec4f(pt,hgt(pt)+.004,1.);let fd=1.-smoothstep(2.5,4.,c.w/v.cd);if(fd<.01){return O(OFF,vec2f(0.),0.,0.,0.);}
-let r=v.ms.xy*select(1.,1.8,hot>.5);return O(vec4f(c.xy+q*r*c.w,c.zw),q,hot,df.y,fd);}
-@fragment fn fs(@location(0)q:vec2f,@location(1)@interpolate(flat)hot:f32,@location(2)@interpolate(flat)em:f32,@location(3)@interpolate(flat)fd:f32)->@location(0)vec4f{let a=smoothstep(.13,.07,abs(length(q)-.89));if(a<.01){discard;}
-return vec4f(select(select(vec3f(.55,.58,.64),vec3f(.07,.07,.07),em>.5),vec3f(0.,.55,.9),hot>.5),a*fd*.95);}`})
-const cmod=dev.createShaderModule({code:WG+`struct O{@builtin(position)p:vec4f,@location(0)f:f32};
-@vertex fn vs(@builtin(vertex_index)i:u32,@location(0)q:vec4u)->O{let c=v.vp*vec4f(vec2f(select(q.xy,q.zw,i==1u))*.02,.001,1.);return O(c,1.-smoothstep(6.,12.,c.w/v.cd));}
-@fragment fn fs(@location(0)f:f32)->@location(0)vec4f{return vec4f(0.,0.,0.,f);}
-@vertex fn vsf(@builtin(vertex_index)i:u32,@location(0)q:vec4u)->@builtin(position)vec4f{let p=select(select(vec2f(q.xy),vec2f(q.zw),i==2u)*.02,vec2f(${MX+NC*CELL/2},${MY+NR*CELL/2}),i==0u);return v.vp*vec4f(p,.001,1.);}
-@fragment fn fsf()->@location(0)vec4f{return vec4f(0.);}
-@vertex fn vss(@builtin(vertex_index)i:u32)->@builtin(position)vec4f{let p=vec2f(${MX},${MY})+vec2f(${NC*CELL}.,${NR*CELL}.)*(vec2f(vec2u(i&1u,i>>1u))*41.-20.);return v.vp*vec4f(p,0.,1.);}
-@fragment fn fss()->@location(0)vec4f{return vec4f(.905,.912,.92,1.);}`})
-const tmod=dev.createShaderModule({code:WG+`@vertex fn vs(@builtin(vertex_index)vi:u32,@builtin(instance_index)li:u32)->@builtin(position)vec4f{
-let k=vi>>1u;let st=v.tw.z;let nw=u32(v.tw.w);let nh=u32(v.tw2.x);var g:vec2f;
-if(li<nh){if(k+1u>=nw){return OFF;}g=v.tw.xy+st*vec2f(f32(k+(vi&1u)),f32(li));}else{if(k+1u>=nh){return OFF;}g=v.tw.xy+st*vec2f(f32(li-nh),f32(k+(vi&1u)));}let p=vec2f(${MX},${MY})+g*${T0S};return v.vp*vec4f(p,hgt(p),1.);}
-@fragment fn fs()->@location(0)vec4f{return vec4f(.30,.42,.50,.12+.26*smoothstep(.02,.5,v.tw2.w));}`})
-const bgl=dev.createBindGroupLayout({entries:[{buffer:{}},{texture:{sampleType:'uint'}},{texture:{sampleType:'uint',viewDimension:'2d-array'}},{buffer:{type:'read-only-storage'}}].map((e,binding)=>({binding,visibility:GPUShaderStage.VERTEX|GPUShaderStage.FRAGMENT,...e}))})
-const blend={color:{srcFactor:'src-alpha',dstFactor:'one-minus-src-alpha'},alpha:{srcFactor:'one',dstFactor:'one-minus-src-alpha'}},layout=dev.createPipelineLayout({bindGroupLayouts:[bgl]}),CAT=[{arrayStride:8,stepMode:'instance',attributes:[{shaderLocation:0,offset:0,format:'uint16x4'}]}];let stT
-const attrs=(arrayStride,a,b)=>[{arrayStride,stepMode:'instance',attributes:[{shaderLocation:0,offset:0,format:a},{shaderLocation:1,offset:8,format:b}]}],V12=attrs(12,'uint16x4','uint16x2')
-const mk=(m,c,buffers,topology='line-list',ds,e='')=>dev.createRenderPipeline({layout,primitive:{topology},vertex:{module:m,entryPoint:'vs'+e,constants:c,buffers},fragment:{module:m,entryPoint:'fs'+e,constants:c,targets:[{format:fmt,blend}]},depthStencil:{format:'depth24plus-stencil8',depthWriteEnabled:false,depthCompare:'less-equal',...ds}})
-const pipe=mk(mod,{PASS:0},V12,'triangle-strip'),pipeHL=mk(mod,{PASS:1},V12,'triangle-strip'),bpipe=mk(bmod,undefined,V12),bfill=mk(bmod,undefined,V12,'triangle-strip',{depthWriteEnabled:true,depthBias:2,depthBiasSlopeScale:2},'f'),rpipe=mk(bmod,undefined,attrs(16,'uint16x4','uint16x4'),'triangle-list',{depthWriteEnabled:true,depthBias:2,depthBiasSlopeScale:2},'r'),twire=mk(tmod),cpipe=mk(cmod,undefined,CAT),wpipe=mk(wmod,undefined,attrs(16,'float32x2','float32x2'),'triangle-strip'),
-fanP=mk(cmod,undefined,CAT,'triangle-list',{depthCompare:'always',stencilFront:{compare:'always',passOp:'invert'},stencilBack:{compare:'always',passOp:'invert'}},'f'),seaP=mk(cmod,undefined,undefined,'triangle-strip',{stencilFront:{compare:'equal'},stencilBack:{compare:'equal'}},'s')
-const[bg,bg2]=[uni,uni2].map(u=>dev.createBindGroup({layout:bgl,entries:[{buffer:u},t0T.createView(),t1T.createView(),{buffer:lutB}].map((resource,binding)=>({binding,resource}))}))
-const mkbuf=ab=>{const b=dev.createBuffer({size:Math.max(12,ab.byteLength),usage:BU.VERTEX|BU.COPY_DST});Q.writeBuffer(b,0,ab);return b}
-const layers={},mklayer=(id,blob,cnt,bytes,cap,gate,load,evict)=>{let a=0;layers[id]={blob,cnt,off:Uint32Array.from(cnt,c=>(a+=c)-c),bytes,cap,gate,load,evict,cells:new Map()}}
-async function page(L){const need=[];for(const e of L.cells.values())e.vis=false
- if(S()>=L.gate){const[c0,c1,r0,r1]=rect();if((c1-c0+1)*(r1-r0+1)<=1200)for(let r=r0;r<=r1;r++)for(let c=c0;c<=c1;c++){const id=c+NC*r
-  if(L.cnt[id]){const e=L.cells.get(id);if(e){e.vis=1;e.t=tick++;L.re?.(id,e)}else need.push(id)}}}
- if(!need.length)return evict(L)
- need.sort((a,b)=>a-b);for(const id of need)L.cells.set(id,{vis:1,t:tick++})
- const runs=[];for(const id of need){const r=runs.at(-1);if(r&&id===r.b+1)r.b=id;else runs.push({a:id,b:id})}
- await Promise.all(runs.map(async run=>{try{const r=await fetch(D+L.blob,{headers:{Range:`bytes=${L.off[run.a]*L.bytes}-${(L.off[run.b]+L.cnt[run.b])*L.bytes-1}`}});if(r.status!==206)throw 0
-  const ab=await r.arrayBuffer();let p=0;for(let id=run.a;id<=run.b;id++){const len=L.cnt[id]*L.bytes;L.cells.set(id,{...L.load(id,new Uint8Array(ab,p,len)),vis:L.cells.get(id)?.vis??1,t:tick++});p+=len}
-  }catch{for(let id=run.a;id<=run.b;id++)if(!L.cells.get(id)?.vb&&!L.cells.get(id)?.cpu)L.cells.delete(id)}}))
- evict(L);draw()}
-function evict(L){if(L.cells.size<=L.cap)return
- for(const[id,e]of[...L.cells].filter(([,e])=>!e.vis).sort((a,b)=>a[1].t-b[1].t)){if(L.cells.size<=L.cap)break;L.evict?.(id,e);e.vb?.destroy();L.cells.delete(id)}}
-const lut=new Int32Array(N).fill(-1),freeL=[...Array(T1L).keys()]
-const hgtC=(x,y)=>{const c=layers.terr?.cells.get(clamp((x-MX)/CELL|0,0,NC-1)+NC*clamp((y-MY)/CELL|0,0,NR-1))
- const[g,W,gx,gy]=c?.cpu?[c.cpu,T1P,((x-MX)/CELL%1)*(T1P-1),((y-MY)/CELL%1)*(T1P-1)]:[t0cpu,T0N,(x-MX)/T0S,(y-MY)/T0S];if(!g)return 0
- const x0=clamp(gx,0,W-1.001),y0=clamp(gy,0,W-1.001),dx=x0%1,dy=y0%1,v=(i,j)=>g[Math.min((y0|0)+j,W-1)*W+Math.min((x0|0)+i,W-1)]
- return ((v(0,0)*(1-dx)+v(1,0)*dx)*(1-dy)+(v(0,1)*(1-dx)+v(1,1)*dx)*dy-1000)*EX*1e-4}
-const setYr=v=>{yr=v;yrs.value=v;ylab.textContent=(lo>Y0?(lo|0)+'–':'')+Math.min(v|0,Y1);draw()},setPlay=p=>{playing=p;play.textContent=p?'⏸︎':'▶︎'}
-yrs.min=los.min=Y0;yrs.max=los.max=Y1+1;yrs.step=los.step=.1;yrs.value=los.value=Y0
-yrs.oninput=()=>{setPlay(false);setYr(Math.max(+yrs.value,lo))}
-los.oninput=()=>{setPlay(false);lo=Math.min(+los.value,yr);los.value=lo;setYr(yr)}
-play.onclick=()=>{setPlay(!playing);if(playing){if(yr>Y1)yr=lo;pt0=0;requestAnimationFrame(anim)}}
-function anim(t){if(!playing)return;if(pt0)setYr(Math.min(yr+(t-pt0)/8e3*(Y1+1-Y0),Y1+1));pt0=t;if(yr>Y1)return setPlay(false);requestAnimationFrame(anim)}
-const dpr=Math.min(devicePixelRatio||1,2),RPX=4.5*dpr,sched=()=>{clearTimeout(timer);timer=setTimeout(update,110)}
-const resize=()=>{cv.width=innerWidth*dpr|0;cv.height=innerHeight*dpr|0;draw();sched()}
-const tip=l=>{tp.innerHTML=l?l.map((s,i)=>`<${i?'span':'b'}>${s}</${i?'span':'b'}>`).join('<br>'):'';draw()}
-function rect(F){const pts=[[0,0],[cv.width,0],[0,cv.height],[cv.width,cv.height]].map(p=>toWorld(...p,F)),xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]),c=(cam.t[0]-MX)/CELL|0,r=(cam.t[1]-MY)/CELL|0,R=16
- return[clamp((Math.min(...xs)-MX)/CELL|0,Math.max(0,c-R),NC-1),clamp((Math.max(...xs)-MX)/CELL|0,0,Math.min(NC-1,c+R)),clamp((Math.min(...ys)-MY)/CELL|0,Math.max(0,r-R),NR-1),clamp((Math.max(...ys)-MY)/CELL|0,0,Math.min(NR-1,r+R)),[Math.min(...xs),Math.max(...xs),Math.min(...ys),Math.max(...ys)]]}
-function draw(){const s=S(),vp=vpMat(),bb=rect()[4]
- const gx=clamp((bb[0]-MX)/T0S,0,T0N-1),gX=clamp((bb[1]-MX)/T0S,0,T0N-1),gy=clamp((bb[2]-MY)/T0S,0,T0N-1),gY=clamp((bb[3]-MY)/T0S,0,T0N-1)
- const st=Math.max(.05,14/(T0S*s*cv.height/2),(gX-gx)/499,(gY-gy)/499),i0=Math.floor(gx/st)*st,j0=Math.floor(gy/st)*st,nw=Math.ceil((gX-i0)/st)+1,nh=Math.ceil((gY-j0)/st)+1
- const wb=rect(40+900/cam.d)[4],wx=clamp((wb[0]-MX)/T0S,0,T0N-1),wX=clamp((wb[1]-MX)/T0S,0,T0N-1),wy=clamp((wb[2]-MY)/T0S,0,T0N-1),wY=clamp((wb[3]-MY)/T0S,0,T0N-1)
- const sf=st*Math.ceil(Math.max(1,(wX-wx)/(349*st),(wY-wy)/(349*st))),iF=Math.floor(wx/sf)*sf,jF=Math.floor(wy/sf)*sf,nwF=Math.ceil((wX-iF)/sf)+1,nhF=Math.ceil((wY-jF)/sf)+1
- const ub=(u,a)=>Q.writeBuffer(u,0,new Float32Array([...vp,RPX*2/cv.width,RPX*2/cv.height,sel,yr>Y1?9e3:yr,...a,mask,lo>Y0?lo:0,cam.p,cam.d]))
- ub(uni,[i0,j0,st,nw,nh]);ub(uni2,[iF,jF,sf,nwF,nhF])
- if(stT?.width!=cv.width||stT?.height!=cv.height){stT?.destroy();stT=dev.createTexture({size:[cv.width,cv.height],format:'depth24plus-stencil8',usage:GPUTextureUsage.RENDER_ATTACHMENT})}
- const e=dev.createCommandEncoder(),p=e.beginRenderPass({colorAttachments:[{view:ctx.getCurrentTexture().createView(),clearValue:{r:1,g:1,b:1,a:1},loadOp:'clear',storeOp:'store'}],depthStencilAttachment:{view:stT.createView(),depthClearValue:1,depthLoadOp:'clear',depthStoreOp:'discard',stencilLoadOp:'clear',stencilStoreOp:'discard'}});p.setBindGroup(0,bg)
- if(s>=BTH)for(const[L,pl,nv]of[[layers.bldg,bfill,4],[layers.roof,rpipe,3],[layers.bldg,bpipe,6]])if(L){p.setPipeline(pl);for(const o of L.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(nv,o.n)}}
- if(coastN){p.setPipeline(fanP);p.setVertexBuffer(0,coastVB);p.draw(3,coastN);p.setPipeline(seaP);p.draw(4)
-  p.setPipeline(cpipe);p.draw(2,coastN)}
- if(cam.p>.02||s>=TH){p.setPipeline(twire);p.draw(2*Math.max(nw,nh),nw+nh)
-  if(sf>st){p.setBindGroup(0,bg2);p.draw(2*Math.max(nwF,nhF),nwF+nhF);p.setBindGroup(0,bg)}}
- for(const pl of[pipe,pipeHL]){p.setPipeline(pl);if(baseN&&s<TH){p.setVertexBuffer(0,baseVB);p.draw(4,baseN)}
-  if(layers.pipe&&s>=TH)for(const o of layers.pipe.cells.values())if(o.vis&&o.vb){p.setVertexBuffer(0,o.vb);p.draw(4,o.n)}}
- if(wkN&&s>=TH){p.setPipeline(wpipe);p.setVertexBuffer(0,wkVB);p.draw(4,wkN)}p.end();Q.submit([e.finish()])
- let li=0;const hits=[]
- for(const[x,y,thr,n]of places){if(thr>=s||li===40)break
-  if(x<bb[0]||x>bb[1]||y<bb[2]||y>bb[3])continue
-  const q=proj(vp,x,y,hgtC(x,y));if(!q||q[0]<0||q[0]>cv.width||q[1]<0||q[1]>cv.height||hits.some(h=>Math.hypot(h[0]-q[0],h[1]-q[1])<64*dpr))continue
-  hits.push(q);pool[li].textContent=n;pool[li++].style.cssText=`left:${q[0]/dpr}px;top:${q[1]/dpr}px;font-size:${thr<.004?12.5:thr<.02?11:thr<.1?10:9}px`}
- for(;li<40;li++)pool[li].style.display='none'}
-const update=()=>{const ps=Object.values(layers).map(page);draw();return Promise.all(ps)}
-const proj=(vp,x,y,z)=>{const w=vp[3]*x+vp[7]*y+vp[11]*z+vp[15];return w<=0?null:[(vp[0]*x+vp[4]*y+vp[8]*z+vp[12])/w*.5*cv.width+cv.width/2,cv.height/2-(vp[1]*x+vp[5]*y+vp[9]*z+vp[13])/w*.5*cv.height,w]}
-const bCache=new Map()
-async function pick(x,y){if(S()<TH)return
- const vp=vpMat(),[bx0,bx1,by0,by1]=rect()[4].map((v,i)=>v+(i%2?.1:-.1));let bd=9*dpr;sel=-1
- if(wk)for(let i=0;i<wkN;i++){const wx=wk[i*4],wy=wk[i*4+1],wd=wk[i*4+2]&&1970+wk[i*4+2]/365.2425
-  if(wx<bx0||wx>bx1||wy<by0||wy>by1||!(mask>>(wk[i*4+3]>.5?10:11)&1)||(wd?wd>yr&&yr<=Y1||wd<lo:lo>Y0))continue
-  const p=proj(vp,wx,wy,hgtC(wx,wy)+.004);if(!p||p[2]>3.2*cam.d)continue;const d=Math.hypot(p[0]-x,p[1]-y);if(d<bd){bd=d;sel=i}}
- if(sel>=0){det??=(await(await fetch(D+'works.tsv')).text()).split('\n');const[permit,cat,status,street,town,auth,start,end,tm,loc]=det[sel].split('\t')
-  return tip([`${street||'(no street)'}${town?', '+town:''}`,`${cat} · ${status.toLowerCase()}`,[loc,tm].filter(Boolean).join(' · ').toLowerCase(),start+(end&&end!==start?' → '+end:''),`${auth.toLowerCase()} · permit ${permit}`].filter(Boolean))}
- if(tofs&&S()>=BTH){const[wx,wy]=toWorld(x,y),c=clamp((wx-MX)/CELL|0,0,NC-1)+NC*clamp((wy-MY)/CELL|0,0,NR-1)
-  if(tofs[c+1]>tofs[c]){if(!bCache.has(c))bCache.set(c,(await(await fetch(D+'bldg.tsv',{headers:{Range:`bytes=${tofs[c]}-${tofs[c+1]-1}`}})).text()).split('\n'))
-   let bn=null;bd=14*dpr
-   for(const row of bCache.get(c)){const[bx,by,name]=row.split('\t');if(!name)continue;const p=proj(vp,+bx,+by,hgtC(+bx,+by));if(!p)continue;const d=Math.hypot(p[0]-x,p[1]-y);if(d<bd){bd=d;bn=name}}
-   if(bn)return tip([bn])}}
- tip(null)}
-const dmin=1/(M.smax*TAN),dmax=1/(M.smin*TAN),dolly=(f,px,py)=>{f=clamp(cam.d*f,dmin,dmax)/cam.d;const g=toWorld(px,py)
- cam.t[0]+=(1-f)*(g[0]-cam.t[0]);cam.t[1]+=(1-f)*(g[1]-cam.t[1]);cam.d*=f;cam.p=Math.min(cam.p,maxP())}
-cv.oncontextmenu=e=>e.preventDefault()
-const pts=new Map();let px=0,py=0,btn=-1,pd=0,pa=0,pmy=0,mv=0
-const two=()=>{const[a,b]=[...pts.values()];return{d:Math.hypot(a.clientX-b.clientX,a.clientY-b.clientY),a:Math.atan2(b.clientY-a.clientY,b.clientX-a.clientX),mx:(a.clientX+b.clientX)/2,my:(a.clientY+b.clientY)/2}}
-cv.onpointerdown=e=>{pts.set(e.pointerId,e);try{cv.setPointerCapture(e.pointerId)}catch{};btn=e.shiftKey?2:e.button;px=e.clientX;py=e.clientY;mv=0;if(pts.size===2){const t=two();pd=t.d;pa=t.a;pmy=t.my}}
-cv.onpointerup=cv.onpointercancel=e=>{pts.delete(e.pointerId);if(e.type==='pointerup'&&!pts.size&&mv<4)pick(e.clientX*dpr,e.clientY*dpr);const r=[...pts.values()][0];if(r){px=r.clientX;py=r.clientY;btn=0}else btn=-1}
-cv.onpointermove=e=>{if(!pts.has(e.pointerId))return;pts.set(e.pointerId,e)
- if(pts.size>=2){const t=two();dolly(pd/t.d,t.mx*dpr,t.my*dpr);cam.a+=t.a-pa;cam.p=clamp(cam.p-(t.my-pmy)*.004,0,maxP());pd=t.d;pa=t.a;pmy=t.my;mv=9;draw();sched();return}
- if(btn<0)return;const dx=e.clientX-px,dy=e.clientY-py;px=e.clientX;py=e.clientY;mv+=Math.abs(dx)+Math.abs(dy)
- if(btn===0){const k=2*cam.d*TAN/(cv.height/dpr),a=cam.a;cam.t[0]-=(Math.cos(a)*dx+Math.sin(a)*dy)*k;cam.t[1]-=(Math.sin(a)*dx-Math.cos(a)*dy)*k}else{cam.a-=dx*.004;cam.p=clamp(cam.p-dy*.004,0,maxP())}
- draw();sched()}
-cv.onwheel=e=>{e.preventDefault();dolly(Math.exp(e.deltaY*.003),e.offsetX*dpr,e.offsetY*dpr);draw();sched()}
-addEventListener('resize',resize)
-const get=f=>fetch(D+f).then(r=>r.ok?r.arrayBuffer():null).catch(()=>null);resize()
-const[pidx,baseAB,t0AB,t1idx,bidx,btofs,ridx,wkAB,coAB,plAB]=await Promise.all(['map.idx','map.base.bin','terr0.bin','terr1.idx','bldg.idx','bldg.tofs','roof.idx','works.f32','coast.u16','places.tsv'].map(get))
-if(!pidx||!baseAB)die('map artefacts missing — run the extractor')
-const vbload=by=>(id,b)=>({vb:mkbuf(b),n:b.byteLength/by})
-mklayer('pipe','map.bin',new Uint32Array(pidx),12,700,TH,vbload(12));baseVB=mkbuf(baseAB);baseN=baseAB.byteLength/12
-if(t0AB){t0cpu=new Uint16Array(t0AB);Q.writeTexture({texture:t0T},t0AB,{bytesPerRow:T0N*2},[T0N,T0N])}
-if(t1idx){const bits=new Uint8Array(t1idx),cnt=Uint8Array.from({length:N},(_,i)=>(bits[i>>3]>>(i&7))&1)
- const toL=(id,cpu)=>{const l=freeL.pop();if(l==null)return null
-  Q.writeTexture({texture:t1T,origin:[0,0,l]},cpu,{bytesPerRow:T1P*2},[T1P,T1P,1]);lut[id]=l;Q.writeBuffer(lutB,id*4,lut,id,1);return l}
- mklayer('terr','terr1.bin',cnt,T1B,T1L-8,TH,(id,b)=>{const cpu=new Uint16Array(b.buffer.slice(b.byteOffset,b.byteOffset+T1B));return{cpu,l:toL(id,cpu)}},
-  (id,e)=>{if(e.l!=null){freeL.push(e.l);lut[id]=-1;Q.writeBuffer(lutB,id*4,lut,id,1)}})
- layers.terr.re=(id,e)=>{if(e.cpu&&e.l==null)e.l=toL(id,e.cpu)}}
-if(bidx&&btofs){tofs=new Uint32Array(btofs);mklayer('bldg','bldg.bin',new Uint32Array(bidx),12,250,BTH,vbload(12))}
-if(ridx)mklayer('roof','roof.bin',new Uint32Array(ridx),16,250,BTH,vbload(16))
-if(wkAB){wk=new Float32Array(wkAB);wkVB=mkbuf(wkAB);wkN=wk.length/4}
-if(coAB){coastVB=mkbuf(coAB);coastN=coAB.byteLength/8}
-if(plAB)places=new TextDecoder().decode(plAB).trim().split('\n').map(l=>{const[n,x,y,r]=l.split('\t');return[+x,+y,18e3/+r,n]})
-Q.writeBuffer(lutB,0,lut);msg.remove();await update();requestAnimationFrame(anim)
-window.dbg=()=>({cam,yr,wk,wkN,sel,layers,draw,vpMat,proj,toWorld,hgtCPU:hgtC,pick,go:(x,y,z,p=0,a=0)=>{cam.t=[x,y];cam.d=1/(z*TAN);cam.a=a;cam.p=p;return update()}})
-</script>
+<div id=leg></div>
+<div id=pl></div>
+<div id=tl><button id=play>⏸&#xfe0e;</button><div id=rg><input id=los type=range><input id=yrs type=range></div><span id=ylab></span></div>
+<div id=msg>loading…</div>
+<div id=tp></div>
+<a class="logo" href="https://research.datadesk.eco/" target="_blank" rel="noopener"><svg viewBox="0 0 734.66 733.34"> <path fill="currentColor" d="M144.68,0c-4.92,0-9.63,1.99-13.05,5.52L4.17,136.69C1.49,139.44,0,143.12,0,146.96v440.75c-.01,3.83,1.54,7.6,4.22,10.32l128.48,130.9c2.77,2.82,6.56,4.41,10.51,4.41h224.12c49.96,0,98.27-9.63,143.61-28.63,43.81-18.36,83.08-44.69,116.71-78.24,33.61-33.53,59.98-72.67,78.37-116.33,19.01-45.12,28.64-93.17,28.64-142.81s-9.72-97.68-28.88-142.97c-18.5-43.74-44.99-83.02-78.72-116.76-33.73-33.73-73.02-60.22-116.76-78.72C465.01,9.72,416.91,0,367.33,0H144.68ZM29.46,152.93L128.48,51.03V455.48c0,8.13,6.59,14.73,14.73,14.73h224.12c56.73,0,102.88-46.15,102.88-102.88s-46.15-102.88-102.88-102.88h-73.42v-102.77h73.42c17.17,0,34.01,2.09,50.25,6.15,1.62,.41,3.24,.83,4.85,1.28,2.42,.67,4.82,1.38,7.2,2.13,31.02,9.82,59.45,27,83.11,50.67,26.1,26.1,44.31,57.97,53.46,92.74,1.49,5.66,2.74,11.4,3.74,17.2,.29,1.66,.55,3.32,.8,4.99,1.48,10.01,2.23,20.19,2.23,30.49s-.75,20.48-2.23,30.49c-.25,1.67-.51,3.33-.8,4.99-1,5.8-2.25,11.54-3.74,17.2-9.15,34.77-27.36,66.65-53.46,92.74-23.67,23.67-52.09,40.86-83.11,50.67-2.39,.76-4.79,1.47-7.2,2.13-1.61,.44-3.23,.87-4.85,1.28-16.23,4.06-33.08,6.15-50.25,6.15H29.46V152.93Zm264.45,140.98h73.42c40.48,0,73.42,32.94,73.42,73.42s-32.94,73.42-73.42,73.42h-73.42v-146.84Zm384.96,204.79c-16.9,40.12-41.13,76.09-72.02,106.91-30.92,30.85-67.02,55.05-107.29,71.93-41.71,17.48-86.19,26.34-132.22,26.34H149.39l-99.57-101.44H367.33c31.73,0,62.53-6.22,91.52-18.48,28-11.84,53.14-28.79,74.73-50.38,6.75-6.75,13.04-13.84,18.86-21.26,12.82-16.32,23.37-34.22,31.51-53.47,7.66-18.12,12.97-36.95,15.87-56.26,1.74-11.59,2.61-23.36,2.61-35.26s-.87-23.67-2.61-35.26c-2.9-19.32-8.2-38.14-15.87-56.26-8.14-19.25-18.7-37.15-31.51-53.47-5.83-7.42-12.12-14.51-18.86-21.26-21.59-21.59-46.73-38.54-74.73-50.38-28.99-12.26-59.79-18.48-91.52-18.48h-88.15c-8.13,0-14.73,6.59-14.73,14.73V440.75h-106.51V29.46h209.39c45.61,0,89.85,8.93,131.5,26.55,40.23,17.02,76.37,41.39,107.4,72.42,31.04,31.04,55.4,67.17,72.42,107.4,17.62,41.64,26.55,85.89,26.55,131.5s-8.86,89.89-26.33,131.37Z"/> </svg></a>
+<script type=module src=main.js></script>
 </html>
