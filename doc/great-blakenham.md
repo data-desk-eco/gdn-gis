@@ -44,6 +44,41 @@ parallel lines are never an insertion record.
 - **2003** — 315 mm mp pe backbone laid north–south *parallel to the 1939 mp
   cast iron*, which is still in cadent's current open asset release.
 
+## postscript: the ghgsat plume (added same day)
+
+a ghgsat-c4 observation (id IlA-p3L, 2024-08-13 14:15 utc,
+`~/Downloads/gipping_road.png`) shows a methane plume with >500 ppb column
+excess at source, drifting ~3 km north-east on a south-westerly wind. the
+origin pixel sits on the east edge of the village — on the gipping road →
+station road corridor carried by the 1930 6″ lp cast iron spine
+(410965310 / 410965317 / 410965217), between the ci–ci junction and the
+1973-75 governor cluster.
+
+the street manager archive brackets the pass with emergency escape repairs
+on exactly those mains:
+
+| date | permit | where | main |
+|---|---|---|---|
+| 2024-05-20 → 06-03 | AZ1031001344958 | gipping road (612310, 250331), road closure | 6″ ci junction (410965310, 0.5 m off) |
+| 2024-06-30 → 07-06 | AZ1031001354093 | station road (612871, 250020) | 6″ ci 410965217 (6 m off) |
+| **2024-08-13** | — | **ghgsat images the plume** | — |
+| 2024-09-05 → 09-06 | AZ1031001368289 | station road (612911, 250013), 40 m from the june dig | same 6″ ci |
+
+so the corridor was leaking *between* (or despite) two emergency repairs,
+and the 5 september emergency dig — three weeks after the pass — is the
+likely fix of what the satellite saw. wind direction rules out the obvious
+non-network candidates (the blakenham pit landfill is up-plume to the nw,
+the energy-from-waste plant ssw; the origin is in the village street grid).
+
+context: 16 immediate gas escapes within 800 m of this corridor since the
+archive opens in july 2020 — gipping road ×3, chapel lane ×3, station road
+×2, norwich road/barham ×5. the exact precedent is cheltenham 2023, where
+ghgsat imaged a low-pressure distribution main leaking at a validated
+236–1375 kg/h over 11 weeks (amt 17:1599, 2024) with column enhancements of
+the same order as seen here — i.e. plausibly hundreds of kg/h at pass time.
+neither imeo/mars nor any press coverage mentions this observation; as far
+as public record goes, it is unreported.
+
 ## the actual story, if there is one
 
 the screenshot pair is unremarkable, but the corridor holds a sharper
