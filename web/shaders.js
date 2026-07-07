@@ -99,11 +99,16 @@ struct O{@builtin(position)p:vec4f,@location(0)@interpolate(flat)t:u32};
   let hide=(yr>0u&&(f32(yr)+${M.yr0}.>v.ms.w||f32(yr)+${M.yr0}.<v.tw2.z))
     ||((u32(v.tw2.y)>>bit)&1u)==0u;
   if((PASS>.5&&(m&0x400000u)==0u)||hide){return O(OFF,0u);}
-  let A=cellWorld(cell,q.xy);let B=cellWorld(cell,q.zw);
-  let ca=v.vp*vec4f(A,terrainHeight(A)+.002,1.);
-  let cb=v.vp*vec4f(B,terrainHeight(B)+.002,1.);
+  let A=cellWorld(cell,q.xy);let B=cellWorld(cell,q.zw);let hA=terrainHeight(A);let hB=terrainHeight(B);
+  let ca=v.vp*vec4f(A,hA+.002,1.);let cb=v.vp*vec4f(B,hB+.002,1.);
   let c=select(ca,cb,i>1u);
-  let d=normalize(cb.xy/cb.w-ca.xy/ca.w);
+  // extrusion direction from the projected segment delta. computing it as
+  // (cb-ca) folds each endpoint's huge world coordinate through vp first, and
+  // at deep top-down zoom the f32 cancellation collapses the difference to
+  // zero -> normalize() = NaN -> metal culls the quad and the pipe vanishes;
+  // projecting the small B-A delta instead keeps the numbers tiny and exact
+  let e=(v.vp*vec4f(B-A,hB-hA,0.)).xy;
+  let d=select(vec2f(1.,0.),normalize(e),dot(e,e)>1e-30);
   return O(vec4f(c.xy+vec2f(-d.y,d.x)*(f32(i&1u)*2.-1.)*v.ms.xy*${(1 / 4.5).toFixed(4)}*c.w,c.zw),tn);
 }
 const PAL=array<vec3f,10>(${palette},${rgb('4d5261')},${rgb('9096a0')});
