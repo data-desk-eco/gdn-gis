@@ -172,7 +172,8 @@ async function pick(x, y) {
       `${cat} · ${status.toLowerCase()}`,
       [loc, tm].filter(Boolean).join(' · ').toLowerCase(),
       start + (end && end !== start ? ' → ' + end : ''),
-      `${auth.toLowerCase()} · permit ${permit}`,
+      auth.toLowerCase(),
+      `permit ${permit}`,
     ].filter(Boolean))
   }
   if (tofs && cam.scale() >= BTH) {
