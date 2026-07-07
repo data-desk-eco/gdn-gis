@@ -6,7 +6,7 @@ import { TAN, clamp, makeCamera } from './camera.js'
 import { makePaging } from './paging.js'
 import { initGPU, makeRenderer } from './render.js'
 import { makeUI } from './ui.js'
-import { EXAGGERATE } from './shaders.js'
+import { EXAGGERATE, MATERIALS } from './shaders.js'
 
 const $ = id => document.getElementById(id)
 const cv = $('cv'), msg = $('msg')
@@ -139,6 +139,12 @@ const details = () => detP ??= fetch(D + 'works.tsv').then(r => r.text()).then(t
 const siteDetails = () => siteP ??= fetch(D + 'sites.tsv').then(r => r.text()).then(t => t.split('\n'))
 const fatalDetails = () => fatP ??= fetch(D + 'fatal.tsv').then(r => r.text()).then(t => t.split('\n'))
 const bldgNames = new Map()
+// pipe records by tone (the packed word's material slot, MATS order)
+const TONE = [...MATERIALS.filter(m => m[2] >= 0).sort((a, b) => a[2] - b[2]).map(m => m[1]), 'unknown']
+// the paged pipe cells are gpu-only, so picking range-refetches a cell's
+// 12 B records on demand (browser cache + this map keep it one round trip)
+const pipeCells = new Map()
+const pipeSegs = (L, id) => pipeCells.get(id) ?? pipeCells.set(id, fetch(D + 'map.bin', { headers: { Range: `bytes=${L.offsets[id] * 12}-${(L.offsets[id] + L.counts[id]) * 12 - 1}` } }).then(r => r.arrayBuffer()).then(ab => new Uint16Array(ab))).get(id)
 async function pick(x, y) {
   const vp = cam.viewProj(), [bx0, bx1, by0, by1] = cam.cellRect()[4].map((v, i) => v + (i % 2 ? .1 : -.1))
   let best = 9 * dpr
@@ -175,6 +181,42 @@ async function pick(x, y) {
       auth.toLowerCase(),
       `permit ${permit}`,
     ].filter(Boolean))
+  }
+  // pipes: nearest visible segment within 8 px, over the clicked cell + its
+  // neighbours (segments are cell-clipped, so the 3×3 block covers the radius)
+  const P = state.layers.pipe
+  if (P && cam.scale() >= TH) {
+    const [wx, wy] = cam.screenToWorld(x, y)
+    const cc = (wx - MX) / CELL | 0, cr = (wy - MY) / CELL | 0
+    const clock = state.yr > Y1 ? 9e3 : state.yr, lo = state.lo > Y0 ? state.lo : 0
+    const ids = []
+    for (let r = Math.max(cr - 1, 0); r <= Math.min(cr + 1, NR - 1); r++)
+      for (let c = Math.max(cc - 1, 0); c <= Math.min(cc + 1, NC - 1); c++)
+        if (P.counts[c + NC * r]) ids.push(c + NC * r)
+    let hit = -1
+    best = 8 * dpr
+    for (const [k, u] of (await Promise.all(ids.map(id => pipeSegs(P, id)))).entries()) {
+      const ox = MX + ids[k] % NC * CELL, oy = MY + (ids[k] / NC | 0) * CELL
+      for (let i = 0; i < u.length; i += 6) {
+        const w = u[i + 4] | u[i + 5] << 16, tn = w >> 18 & 15, yr = w >>> 23
+        if ((yr && (yr + M.yr0 > clock || yr + M.yr0 < lo))
+          || !(state.mask >> (tn === 9 ? 12 : Math.min(tn, 8)) & 1 || w >> 22 & 1 && state.mask >> 9 & 1)) continue
+        const ax = ox + u[i] * CELL / 65535, ay = oy + u[i + 1] * CELL / 65535
+        const bx = ox + u[i + 2] * CELL / 65535, by = oy + u[i + 3] * CELL / 65535
+        const A = cam.project(vp, ax, ay, heightAt(ax, ay) + .002), B = cam.project(vp, bx, by, heightAt(bx, by) + .002)
+        if (!A || !B) continue
+        const dx = B[0] - A[0], dy = B[1] - A[1], t = clamp(((x - A[0]) * dx + (y - A[1]) * dy) / (dx * dx + dy * dy || 1), 0, 1)
+        const d = Math.hypot(x - A[0] - t * dx, y - A[1] - t * dy)
+        if (d < best) { best = d; hit = w }
+      }
+    }
+    if (hit >= 0) {
+      const tn = hit >> 18 & 15, yr = hit >>> 23
+      return ui.tip([
+        tn === 9 ? 'nts pipeline' : hit >> 22 & 1 ? 'm.p. ductile iron' : TONE[Math.min(tn, 8)],
+        yr ? `laid ~${yr + M.yr0}` : 'undated',
+      ])
+    }
   }
   if (tofs && cam.scale() >= BTH) {
     const [wx, wy] = cam.screenToWorld(x, y)
