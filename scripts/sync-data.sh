@@ -6,7 +6,8 @@
 # usage: scripts/sync-data.sh [file...]   (defaults to all of dist/)
 cd "$(dirname "$0")/.."
 [ $# -gt 0 ] || set -- dist/*
+# no-cache: browsers revalidate by etag instead of serving hour-old blobs
 for f; do case "${f##*/}" in
-  map.bin|terr1.bin|bldg.bin|roof.bin|bldg.tsv|*.parquet) gcloud storage cp "$f" gs://gdn-gis-data/;;
-  *) gcloud storage cp -Z "$f" gs://gdn-gis-data/;;
+  map.bin|terr1.bin|bldg.bin|roof.bin|bldg.tsv|*.parquet) gcloud storage cp --cache-control=no-cache "$f" gs://gdn-gis-data/;;
+  *) gcloud storage cp -Z --cache-control=no-cache "$f" gs://gdn-gis-data/;;
 esac; done
