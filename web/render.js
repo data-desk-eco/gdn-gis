@@ -60,11 +60,15 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
     roof: mk(mod.buildings, undefined, attrs(16, 'uint16x4', 'uint16x2', 'uint32'), 'triangle-list', solid, 'r'),
     works: mk(mod.works, undefined, attrs(16, 'float32x2', 'float32x2'), 'triangle-strip'),
     terrainWire: mk(mod.terrain),
-    coastLine: mk(mod.coast, undefined, attrs(8, 'uint16x4')),
+    // the hairline is a boundary overlay: lines take no depth bias, so the
+    // biased sea plane would win at grazing angles and dash it
+    coastLine: mk(mod.coast, undefined, attrs(8, 'uint16x4'), 'line-list', { depthCompare: 'always' }),
     // land/sea: invert stencil per coast-fan triangle, then fill where even
     coastFan: mk(mod.coast, undefined, attrs(8, 'uint16x4'), 'triangle-list',
       { depthCompare: 'always', stencilFront: { compare: 'always', passOp: 'invert' }, stencilBack: { compare: 'always', passOp: 'invert' } }, 'f'),
-    sea: mk(mod.coast, undefined, undefined, 'triangle-strip', { stencilFront: { compare: 'equal' }, stencilBack: { compare: 'equal' } }, 's'),
+    // sea writes depth, biased a hair toward the camera so co-planar offshore
+    // wire lines (terrain defaults to 0 at sea) fail the depth test cleanly
+    sea: mk(mod.coast, undefined, undefined, 'triangle-strip', { depthWriteEnabled: true, depthBias: -2, depthBiasSlopeScale: -2, stencilFront: { compare: 'equal' }, stencilBack: { compare: 'equal' } }, 's'),
   }
 
   const makeBuffer = ab => {
@@ -104,8 +108,10 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
   }
 
   // one pass draws everything, back to front: building fills + roofs write
-  // depth so walls occlude; the coast stencil fan classifies sea; wire grids,
-  // pipes (base skeleton far out, paged cells at detail), then works rings
+  // depth so walls occlude; the coast stencil fan classifies sea and the sea
+  // fill writes depth so offshore wire lines are occluded; wire grids, the
+  // coast hairline, pipes (base skeleton far out, paged cells at detail),
+  // then works rings
   function draw() {
     const { cam, layers } = state, s = cam.scale(), vp = cam.viewProj(), bb = cam.cellRect()[4]
 
@@ -152,7 +158,6 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
     if (state.coastN) {
       p.setPipeline(pipe.coastFan); p.setVertexBuffer(0, state.coastVB); p.draw(3, state.coastN)
       p.setPipeline(pipe.sea); p.draw(4)
-      p.setPipeline(pipe.coastLine); p.draw(2, state.coastN)
     }
 
     if (cam.pitch > .02 || s >= TH) {
@@ -160,6 +165,8 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
       p.draw(2 * Math.max(nw, nh), nw + nh)
       p.setBindGroup(0, bg2); p.draw(2 * Math.max(nwF, nhF), nwF + nhF); p.setBindGroup(0, bg)
     }
+
+    if (state.coastN) { p.setPipeline(pipe.coastLine); p.setVertexBuffer(0, state.coastVB); p.draw(2, state.coastN) }
 
     for (const pl of [pipe.pipes, pipe.pipesHL]) {
       p.setPipeline(pl)
