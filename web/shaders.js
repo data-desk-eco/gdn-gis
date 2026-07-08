@@ -6,15 +6,13 @@
 // cell-local u16 coordinate decode. that shared sampler is what drapes every
 // layer — pipes, buildings, works — over the terrain for free.
 //
-// uniform block V (128 B; two instances exist so the near and far terrain
-// wire grids can draw with different tw/tw2 in one pass):
+// uniform block V (128 B):
 //   vp   view-projection, bng km world space
 //   ms   (line half-width clip x, clip y, selected work index, year clock)
 //   tw   terrain wire grid: (col0, row0, step, ncols)
 //   tw2  (terrain wire nrows, legend mask bits, from-year, camera pitch)
 //   cd   camera distance, for distance fades
 //   fe   terrain wire far fade-out distance (in cd units)
-//   fi   terrain wire near fade-in distance
 //   ma   minor-line alpha: odd grid lines fade in as the step subdivides
 
 // [hex, label, palette slot]: slots 0-7 index the shader palette; materials
@@ -50,7 +48,7 @@ export function shaders(M) {
     `vec4f(vec4u(${[[0, 0], [1, 0], [0, 1], [1, 1]].map(o => `textureLoad(${tex},i+vec2u(${o}),${layer}0).r`)}))`
 
   const common = `
-struct V{vp:mat4x4f,ms:vec4f,tw:vec4f,tw2:vec4f,cd:f32,fe:f32,fi:f32,ma:f32};
+struct V{vp:mat4x4f,ms:vec4f,tw:vec4f,tw2:vec4f,cd:f32,fe:f32,ma:f32};
 @group(0)@binding(0)var<uniform> v:V;
 @group(0)@binding(1)var coarseTex:texture_2d<u32>;
 @group(0)@binding(2)var fineTex:texture_2d_array<u32>;
@@ -204,8 +202,8 @@ struct O{@builtin(position)p:vec4f,@location(0)f:f32};
   // (first nrows horizontal, then columns), vertex index walks along it,
   // terrainHeight supplies z. grid placement comes from tw/tw2. the step is
   // snapped to a pow2 of the base spacing so lines sit at fixed world
-  // positions; odd (minor) lines crossfade in via ma, and each grid fades
-  // between its fi/fe distance band so the two tiers hand over invisibly.
+  // positions; odd (minor) lines crossfade in via ma, and the grid fades out
+  // toward its fe distance (the pitch ceiling keeps the view inside it).
   const terrain = common + `
 struct O{@builtin(position)p:vec4f,@location(0)w:f32,@location(1)@interpolate(flat)m:f32};
 
@@ -224,7 +222,7 @@ struct O{@builtin(position)p:vec4f,@location(0)w:f32,@location(1)@interpolate(fl
   return O(c,c.w/v.cd,select(1.,v.ma,(x&1u)==1u));
 }
 @fragment fn fs(@location(0)w:f32,@location(1)@interpolate(flat)m:f32)->@location(0)vec4f{
-  return vec4f(.30,.42,.50,(.12+.26*smoothstep(.02,.5,v.tw2.w))*m*(1.-smoothstep(.7*v.fe,v.fe,w))*smoothstep(v.fi,v.fi+1.8,w));
+  return vec4f(.30,.42,.50,(.12+.26*smoothstep(.02,.5,v.tw2.w))*m*(1.-smoothstep(.7*v.fe,v.fe,w)));
 }`
 
   return { pipes, buildings, works, coast, terrain }

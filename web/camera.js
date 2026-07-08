@@ -22,7 +22,9 @@ export function makeCamera(M, canvas, heightAt) {
 
   // map scale: 1 world km -> `scale()` clip units
   const scale = () => 1 / (cam.dist * TAN)
-  const maxPitch = () => 1.38 * clamp(2 * scale() / M.detail_scale - .6, 0, 1)
+  // ceiling 1 rad keeps the top-of-screen ground ray within ~4·dist, so the
+  // single wire grid covers everything visible (no horizon, no far tier)
+  const maxPitch = () => clamp(2 * scale() / M.detail_scale - .6, 0, 1)
 
   // eye position + view-space axes
   const basis = () => {

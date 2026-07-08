@@ -21,8 +21,8 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
   const TH = M.detail_scale, BTH = M.bldg_scale, [Y0, Y1] = M.yr
   const BU = GPUBufferUsage, TU = GPUTextureUsage, Q = dev.queue
 
-  // uniforms ×2 (near + far terrain wire grids), detail-slot lut, textures
-  const [uni, uni2] = [0, 0].map(() => dev.createBuffer({ size: 128, usage: BU.UNIFORM | BU.COPY_DST }))
+  // uniforms, detail-slot lut, textures
+  const uni = dev.createBuffer({ size: 128, usage: BU.UNIFORM | BU.COPY_DST })
   const lutB = dev.createBuffer({ size: N * 4, usage: BU.STORAGE | BU.COPY_DST })
   const tex = size => dev.createTexture({ size, format: 'r16uint', usage: TU.TEXTURE_BINDING | TU.COPY_DST })
   const coarseT = tex([T0X, T0Y]), fineT = tex([T1P, T1P, DETAIL_SLOTS])
@@ -31,10 +31,10 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
     entries: [{ buffer: {} }, { texture: { sampleType: 'uint' } }, { texture: { sampleType: 'uint', viewDimension: '2d-array' } }, { buffer: { type: 'read-only-storage' } }]
       .map((e, binding) => ({ binding, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, ...e })),
   })
-  const [bg, bg2] = [uni, uni2].map(u => dev.createBindGroup({
+  const bg = dev.createBindGroup({
     layout: bgl,
-    entries: [{ buffer: u }, coarseT.createView(), fineT.createView(), { buffer: lutB }].map((resource, binding) => ({ binding, resource })),
-  }))
+    entries: [{ buffer: uni }, coarseT.createView(), fineT.createView(), { buffer: lutB }].map((resource, binding) => ({ binding, resource })),
+  })
 
   // pipeline factory: instanced draws, premultiplied alpha over white, shared
   // depth-stencil target (depth read-only unless a pass opts in)
@@ -98,24 +98,25 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
 
   let depthT
   const uniData = new Float32Array(32)  // reused every frame; writeBuffer copies synchronously
-  const writeUni = (buf, vp, cam, grid, fade) => {
+  const writeUni = (vp, cam, grid, ma) => {
     uniData.set(vp)
     uniData.set([state.RPX * 2 / canvas.width, state.RPX * 2 / canvas.height, state.sel, state.yr > Y1 ? 9e3 : state.yr], 16)
     uniData.set(grid, 20)
     uniData.set([state.mask, state.lo > Y0 ? state.lo : 0, cam.pitch, cam.dist], 25)
-    uniData.set(fade, 29)  // (fe, fi, ma) — wire grid fade band + minor-line alpha
-    Q.writeBuffer(buf, 0, uniData)
+    uniData.set([6, ma], 29)  // wire grid fade-out distance (·dist) + minor-line alpha
+    Q.writeBuffer(uni, 0, uniData)
   }
 
   // one pass draws everything, back to front: building fills + roofs write
   // depth so walls occlude; the coast stencil fan classifies sea and the sea
-  // fill writes depth so offshore wire lines are occluded; wire grids, the
+  // fill writes depth so offshore wire lines are occluded; the wire grid, the
   // coast hairline, pipes (base skeleton far out, paged cells at detail),
   // then works rings
   function draw() {
     const { cam, layers } = state, s = cam.scale(), vp = cam.viewProj(), bb = cam.cellRect()[4]
 
-    // near terrain wire grid: ~14 px spacing, capped at 500 lines each way.
+    // one terrain wire grid covers the whole view (the pitch ceiling bounds
+    // ground reach to ~4·dist): ~14 px spacing, capped at 500 lines each way.
     // the step snaps to a pow2 of the base spacing so lines keep fixed world
     // positions while orbiting; the fractional remainder crossfades the minor
     // (odd) lines in via ma
@@ -125,17 +126,7 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
     const i0 = Math.floor(gx / st) * st, j0 = Math.floor(gy / st) * st
     const nw = Math.ceil((gX - i0) / st) + 1, nh = Math.ceil((gY - j0) / st) + 1
 
-    // far grid out to the horizon, coarser; the near grid dissolves into it
-    // over the 4.2–6·dist band so the tier boundary is invisible at tilt
-    const wb = cam.cellRect(40 + 900 / cam.dist)[4]
-    const wx = clampT0(wb[0]), wX = clampT0(wb[1]), wy = clampT0(wb[2], 1), wY = clampT0(wb[3], 1)
-    const sm = Math.max(1, (wX - wx) / (349 * st), (wY - wy) / (349 * st))
-    const sf = st * 2 ** Math.floor(Math.log2(sm))
-    const iF = Math.floor(wx / sf) * sf, jF = Math.floor(wy / sf) * sf
-    const nwF = Math.ceil((wX - iF) / sf) + 1, nhF = Math.ceil((wY - jF) / sf) + 1
-
-    writeUni(uni, vp, cam, [i0, j0, st, nw, nh], [6, -9, clamp01(2 - rw / st)])
-    writeUni(uni2, vp, cam, [iF, jF, sf, nwF, nhF], [40 + 900 / cam.dist, 4.2, clamp01(2 - sm * st / sf)])
+    writeUni(vp, cam, [i0, j0, st, nw, nh], clamp01(2 - rw / st))
 
     if (depthT?.width != canvas.width || depthT?.height != canvas.height) {
       depthT?.destroy()
@@ -163,7 +154,6 @@ export function makeRenderer({ dev, ctx, fmt, canvas, M, state }) {
     if (cam.pitch > .02 || s >= TH) {
       p.setPipeline(pipe.terrainWire)
       p.draw(2 * Math.max(nw, nh), nw + nh)
-      p.setBindGroup(0, bg2); p.draw(2 * Math.max(nwF, nhF), nwF + nhF); p.setBindGroup(0, bg)
     }
 
     if (state.coastN) { p.setPipeline(pipe.coastLine); p.setVertexBuffer(0, state.coastVB); p.draw(2, state.coastN) }
