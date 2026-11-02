@@ -90,3 +90,29 @@ export function makeCamera(M, canvas, heightAt) {
 
   return Object.assign(cam, { canvas, scale, maxPitch, basis, viewProj, screenToWorld, project, dolly, cellRect })
 }
+
+// wgs84 degrees -> bng km: helmert shift onto osgb36, then the os national
+// grid transverse mercator on airy 1830 (a few metres, fine for a marker)
+export function bng(lat, lon) {
+  const { sin, cos, tan, atan2, hypot, sqrt, PI } = Math, r = PI / 180
+  let f = lat * r, l = lon * r, s = sin(f), e2 = .0066943800229, nu = 6378137 / sqrt(1 - e2 * s * s)
+  const X = nu * cos(f) * cos(l), Y = nu * cos(f) * sin(l), Z = nu * (1 - e2) * s
+  const k = 1 + 20.4894e-6, rx = -.1502 / 3600 * r, ry = -.247 / 3600 * r, rz = -.8421 / 3600 * r
+  const x = -446.448 + k * X - rz * Y + ry * Z, y = 125.157 + rz * X + k * Y - rx * Z
+  const z = -542.06 - ry * X + rx * Y + k * Z, p = hypot(x, y)
+  const a = 6377563.396 * .9996012717, b = 6356256.909 * .9996012717, n = (a - b) / (a + b)
+  e2 = 1 - b * b / a / a
+  l = atan2(y, x) + 2 * r
+  f = atan2(z, p * (1 - e2))
+  for (let i = 0; i < 6; i++) s = sin(f), f = atan2(z + e2 * 6377563.396 / sqrt(1 - e2 * s * s) * s, p)
+  s = sin(f)
+  const c = cos(f), t = tan(f) ** 2, w = 1 - e2 * s * s, rho = a * (1 - e2) / w ** 1.5
+  nu = a / sqrt(w)
+  const h = nu / rho - 1, d = f - 49 * r, q = f + 49 * r
+  const m = b * ((1 + n + 1.25 * n * n * (1 + n)) * d - 3 * n * (1 + n + 7 / 8 * n * n) * sin(d) * cos(q)
+    + 15 / 8 * n * n * (1 + n) * sin(2 * d) * cos(2 * q) - 35 / 24 * n ** 3 * sin(3 * d) * cos(3 * q))
+  return [(4e5 + l * nu * c * (1 + l * l * c * c / 6 * (nu / rho - t)
+      + l ** 4 * c ** 4 / 120 * (5 - 18 * t + t * t + 14 * h - 58 * t * h))) / 1e3,
+    (m - 1e5 + l * l * nu * s * c / 2 * (1 + l * l * c * c / 12 * (5 - t + 9 * h)
+      + l ** 4 * c ** 4 / 360 * (61 - 58 * t + t * t))) / 1e3]
+}

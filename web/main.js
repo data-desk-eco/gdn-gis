@@ -2,7 +2,7 @@
 // gpu needs each frame lives on one `state` object; `draw()` renders a frame,
 // `sched()` debounces a paging pass after the camera settles.
 
-import { TAN, clamp, makeCamera } from './camera.js'
+import { TAN, bng, clamp, makeCamera } from './camera.js'
 import { makePaging } from './paging.js'
 import { initGPU, makeRenderer } from './render.js'
 import { makeUI } from './ui.js'
@@ -52,6 +52,31 @@ state.layers = paging.layers
 function draw() {
   const { vp, bb, s } = renderer.draw()
   ui.placeLabels(vp, bb, s)
+  const q = here && cam.project(vp, here[0], here[1], heightAt(...here))
+  me.style.cssText = q ? `left:${q[0] / dpr}px;top:${q[1] / dpr}px` : 'display:none'
+}
+
+// user location: the button starts a gps watch and flies to the first fix
+// (and to the latest one on every later press); the dot tracks each update
+const me = $('me')
+let here, fly, watch
+$('loc').onclick = () => {
+  fly = 1
+  if (here) return goHere()
+  watch ??= navigator.geolocation?.watchPosition(p => {
+    const g = bng(p.coords.latitude, p.coords.longitude)
+    if (g[0] < MX || g[1] < MY || g[0] > MX + NC * CELL || g[1] > MY + NR * CELL) return ui.tip(['outside the mapped area'])
+    here = g
+    if (fly) goHere()
+    repaint()
+  }, () => { watch = null; ui.tip(['location unavailable']) }, { enableHighAccuracy: true })
+}
+const goHere = () => {
+  fly = 0
+  cam.target = [...here]
+  cam.dist = Math.min(cam.dist, 1 / TAN)
+  cam.pitch = Math.min(cam.pitch, cam.maxPitch())
+  sched()
 }
 // coalesce repaints: however many events land between frames, render once
 let dirty = false
